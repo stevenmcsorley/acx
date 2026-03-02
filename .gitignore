@@ -1,0 +1,10 @@
+node_modules
+dist
+coverage
+.env
+.env.*
+!.env.example
+.vscode
+*.log
+.DS_Store
+apps/frontend/public/Cesium

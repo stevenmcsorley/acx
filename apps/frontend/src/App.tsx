@@ -1,0 +1,1278 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ApiClient } from "./api/client";
+import { GlobeViewer } from "./cesium/GlobeViewer";
+import { AccordionSection } from "./components/AccordionSection";
+import { CameraFeeds } from "./components/CameraFeeds";
+import { CommandPanel } from "./components/CommandPanel";
+import { FleetPanel } from "./components/FleetPanel";
+import { FlightHud } from "./components/FlightHud";
+import { GeofencePanel } from "./components/GeofencePanel";
+import { ManualFlightPanel } from "./components/ManualFlightPanel";
+import { MissionPlannerPanel } from "./components/MissionPlannerPanel";
+import { RecordingOverlay } from "./components/RecordingOverlay";
+import { RecordsPanel } from "./components/RecordsPanel";
+import { SwarmManagerPanel } from "./components/SwarmManagerPanel";
+import type { SwarmGroup } from "./store/useGroundControlStore";
+import { TelemetryGauges } from "./components/TelemetryGauges";
+import { TopBar } from "./components/TopBar";
+import { WaypointOpsPanel } from "./components/WaypointOpsPanel";
+import { SwarmGroupOps } from "./components/SwarmGroupOps";
+import { WaypointEditorDrawer } from "./components/WaypointEditorDrawer";
+import type { NavTab } from "./components/TopBar";
+import type { ScenarioPreset } from "./types/domain";
+import { useFlightRecorder } from "./hooks/useFlightRecorder";
+import { useVideoRecorder } from "./hooks/useVideoRecorder";
+import { useGroundControlStore } from "./store/useGroundControlStore";
+import { useTelemetrySocket } from "./websocket/useTelemetrySocket";
+
+type MissionOutcome = {
+  type: "success" | "aborted";
+  title: string;
+  subtitle: string;
+};
+
+type RtlBanner = {
+  title: string;
+  subtitle: string;
+  tone: "warning" | "danger";
+};
+
+function rtlBannerForMode(droneId: string, mode: string): RtlBanner | null {
+  switch (mode) {
+    case "rtl-low-signal":
+      return {
+        title: "AUTO RTL",
+        subtitle: `${droneId}: low signal, returning to launch`,
+        tone: "warning"
+      };
+    case "rtl-low-battery":
+      return {
+        title: "AUTO RTL",
+        subtitle: `${droneId}: low battery, returning to launch`,
+        tone: "warning"
+      };
+    case "rtl-mission-energy":
+      return {
+        title: "AUTO RTL",
+        subtitle: `${droneId}: mission reserve insufficient, returning to launch`,
+        tone: "danger"
+      };
+    case "rtl-geofence":
+      return {
+        title: "AUTO RTL",
+        subtitle: `${droneId}: geofence breach, returning to launch`,
+        tone: "danger"
+      };
+    default:
+      return null;
+  }
+}
+
+function rtlBannerForAlert(droneId: string, message: string): RtlBanner | null {
+  const lower = message.toLowerCase();
+  if (lower.includes("low signal")) {
+    return {
+      title: "AUTO RTL",
+      subtitle: `${droneId}: low signal, returning to launch`,
+      tone: "warning"
+    };
+  }
+
+  if (lower.includes("low battery")) {
+    return {
+      title: "AUTO RTL",
+      subtitle: `${droneId}: low battery, returning to launch`,
+      tone: "warning"
+    };
+  }
+
+  if (lower.includes("geofence breach")) {
+    return {
+      title: "AUTO RTL",
+      subtitle: `${droneId}: geofence breach, returning to launch`,
+      tone: "danger"
+    };
+  }
+
+  if (lower.includes("aborting mission")) {
+    return {
+      title: "AUTO RTL",
+      subtitle: `${droneId}: mission reserve insufficient, returning to launch`,
+      tone: "danger"
+    };
+  }
+
+  return null;
+}
+
+export default function App(): JSX.Element {
+  const apiBaseUrl = useGroundControlStore((s) => s.apiBaseUrl);
+  const wsBaseUrl = useGroundControlStore((s) => s.wsBaseUrl);
+  const token = useGroundControlStore((s) => s.token);
+  const user = useGroundControlStore((s) => s.user);
+  const drones = useGroundControlStore((s) => s.drones);
+  const telemetryByDrone = useGroundControlStore((s) => s.telemetryByDrone);
+  const telemetryHistoryByDrone = useGroundControlStore((s) => s.telemetryHistoryByDrone);
+  const alerts = useGroundControlStore((s) => s.alerts);
+  const geofences = useGroundControlStore((s) => s.geofences);
+  const missions = useGroundControlStore((s) => s.missions);
+  const selectedDroneId = useGroundControlStore((s) => s.selectedDroneId);
+  const plannerEnabled = useGroundControlStore((s) => s.plannerEnabled);
+  const plannerWaypoints = useGroundControlStore((s) => s.plannerWaypoints);
+  const cameraMode = useGroundControlStore((s) => s.cameraMode);
+  const busy = useGroundControlStore((s) => s.busy);
+  const activeTab = useGroundControlStore((s) => s.activeTab);
+  const autoEngage = useGroundControlStore((s) => s.autoEngage);
+  const swarmGroups = useGroundControlStore((s) => s.swarmGroups);
+  const geofenceDrawing = useGroundControlStore((s) => s.geofenceDrawing);
+  const geofenceDrawPoints = useGroundControlStore((s) => s.geofenceDrawPoints);
+
+  const setSession = useGroundControlStore((s) => s.setSession);
+  const clearSession = useGroundControlStore((s) => s.clearSession);
+  const setDrones = useGroundControlStore((s) => s.setDrones);
+  const setGeofences = useGroundControlStore((s) => s.setGeofences);
+  const setMissions = useGroundControlStore((s) => s.setMissions);
+  const setSelectedDrone = useGroundControlStore((s) => s.setSelectedDrone);
+  const setPlannerEnabled = useGroundControlStore((s) => s.setPlannerEnabled);
+  const addPlannerWaypoint = useGroundControlStore((s) => s.addPlannerWaypoint);
+  const setPlannerWaypoints = useGroundControlStore((s) => s.setPlannerWaypoints);
+  const removePlannerWaypoint = useGroundControlStore((s) => s.removePlannerWaypoint);
+  const clearPlannerWaypoints = useGroundControlStore((s) => s.clearPlannerWaypoints);
+  const updatePlannerWaypoint = useGroundControlStore((s) => s.updatePlannerWaypoint);
+  const setCameraMode = useGroundControlStore((s) => s.setCameraMode);
+  const setBusy = useGroundControlStore((s) => s.setBusy);
+  const setActiveTab = useGroundControlStore((s) => s.setActiveTab);
+  const setAutoEngage = useGroundControlStore((s) => s.setAutoEngage);
+  const addSwarmGroup = useGroundControlStore((s) => s.addSwarmGroup);
+  const removeSwarmGroup = useGroundControlStore((s) => s.removeSwarmGroup);
+  const setSwarmGroups = useGroundControlStore((s) => s.setSwarmGroups);
+  const updateSwarmGroup = useGroundControlStore((s) => s.updateSwarmGroup);
+  const setSwarmGroupStatus = useGroundControlStore((s) => s.setSwarmGroupStatus);
+  const setGeofenceDrawingState = useGroundControlStore((s) => s.setGeofenceDrawing);
+  const clearGeofenceDrawPoints = useGroundControlStore((s) => s.clearGeofenceDrawPoints);
+  const plannerMissionName = useGroundControlStore((s) => s.plannerMissionName);
+  const setPlannerMissionName = useGroundControlStore((s) => s.setPlannerMissionName);
+  const waypointDefaults = useGroundControlStore((s) => s.waypointDefaults);
+  const setWaypointDefaults = useGroundControlStore((s) => s.setWaypointDefaults);
+  const applyDefaultsToAll = useGroundControlStore((s) => s.applyDefaultsToAll);
+
+  const [status, setStatus] = useState<string>("");
+  const [loginEmail, setLoginEmail] = useState("admin@sgcx.local");
+  const [loginPassword, setLoginPassword] = useState("ChangeMe123!");
+  const [trailResetToken, setTrailResetToken] = useState(0);
+  const [missionOutcome, setMissionOutcome] = useState<MissionOutcome | null>(null);
+  const [rtlBanner, setRtlBanner] = useState<RtlBanner | null>(null);
+  const [missionRailOpen, setMissionRailOpen] = useState<"fleet" | "swarmops" | "mission" | "geofences" | null>("mission");
+  const [selectedPlannerWaypointIndex, setSelectedPlannerWaypointIndex] = useState<number | null>(null);
+  const [swarmPresets, setSwarmPresets] = useState<ScenarioPreset[]>([]);
+  const [fpvPitchDeg, setFpvPitchDeg] = useState(0);
+
+  const flightRecorder = useFlightRecorder();
+  const videoRecorder = useVideoRecorder();
+  const globeSectionRef = useRef<HTMLElement | null>(null);
+
+  const handleStartVideoRecording = useCallback(
+    (name: string, droneId: string | null, camMode: string) => {
+      if (!globeSectionRef.current) return;
+      videoRecorder.startRecording(globeSectionRef.current, name, droneId, camMode);
+    },
+    [videoRecorder.startRecording]
+  );
+
+  const api = useMemo(
+    () =>
+      new ApiClient({
+        baseUrl: apiBaseUrl,
+        token: token ?? undefined
+      }),
+    [apiBaseUrl, token]
+  );
+
+  const activeDrones = useMemo(() => drones.filter((drone) => !drone.archivedAt), [drones]);
+
+  const latestMissionForSelectedDrone = useMemo(() => {
+    if (!selectedDroneId) return undefined;
+    return missions
+      .filter((mission) => mission.droneId === selectedDroneId && mission.waypoints.length > 0)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
+  }, [missions, selectedDroneId]);
+
+  const selectedPlannerWaypoint =
+    selectedPlannerWaypointIndex !== null ? plannerWaypoints[selectedPlannerWaypointIndex] : undefined;
+  const eligibleTriggerSwarmGroups = useMemo(
+    () => swarmGroups.filter((group) => group.leaderId === selectedDroneId && group.state !== "DISBANDING"),
+    [selectedDroneId, swarmGroups]
+  );
+
+  const selectedTelemetry = selectedDroneId ? telemetryByDrone[selectedDroneId] : undefined;
+  const manualSocketRef = useRef<WebSocket | null>(null);
+  const manualReconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const rtlBannerTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const previousSelectedModeRef = useRef("");
+  const lastSelectedAlertRef = useRef("");
+
+  useTelemetrySocket();
+
+  useEffect(() => {
+    if (!token) {
+      return;
+    }
+
+    const url = new URL(`${wsBaseUrl}/ws`);
+    url.searchParams.set("token", token);
+
+    let closedByUser = false;
+
+    const connect = () => {
+      const socket = new WebSocket(url.toString());
+      manualSocketRef.current = socket;
+
+      socket.onclose = () => {
+        if (closedByUser) {
+          return;
+        }
+        manualReconnectRef.current = setTimeout(connect, 1200);
+      };
+
+      socket.onerror = () => {
+        socket.close();
+      };
+    };
+
+    connect();
+
+    return () => {
+      closedByUser = true;
+      if (manualReconnectRef.current) {
+        clearTimeout(manualReconnectRef.current);
+        manualReconnectRef.current = null;
+      }
+      manualSocketRef.current?.close();
+      manualSocketRef.current = null;
+    };
+  }, [token, wsBaseUrl]);
+
+  // Record telemetry for flight recorder
+  useEffect(() => {
+    if (selectedTelemetry && flightRecorder.recording) {
+      flightRecorder.tick(selectedTelemetry);
+    }
+  }, [selectedTelemetry, flightRecorder]);
+
+  useEffect(() => {
+    return () => {
+      if (rtlBannerTimeoutRef.current) {
+        clearTimeout(rtlBannerTimeoutRef.current);
+        rtlBannerTimeoutRef.current = null;
+      }
+    };
+  }, []);
+
+  const showRtlBanner = useCallback((banner: RtlBanner, timeoutMs = 6500) => {
+    if (rtlBannerTimeoutRef.current) {
+      clearTimeout(rtlBannerTimeoutRef.current);
+    }
+
+    setRtlBanner(banner);
+    rtlBannerTimeoutRef.current = setTimeout(() => {
+      setRtlBanner((current) =>
+        current?.title === banner.title && current?.subtitle === banner.subtitle ? null : current
+      );
+      rtlBannerTimeoutRef.current = null;
+    }, timeoutMs);
+  }, []);
+
+  useEffect(() => {
+    previousSelectedModeRef.current = "";
+    lastSelectedAlertRef.current = "";
+    setMissionOutcome(null);
+    setRtlBanner(null);
+    setSelectedPlannerWaypointIndex(null);
+    if (rtlBannerTimeoutRef.current) {
+      clearTimeout(rtlBannerTimeoutRef.current);
+      rtlBannerTimeoutRef.current = null;
+    }
+  }, [selectedDroneId]);
+
+  useEffect(() => {
+    if (selectedPlannerWaypointIndex === null) {
+      return;
+    }
+
+    if (plannerWaypoints.length === 0) {
+      setSelectedPlannerWaypointIndex(null);
+      return;
+    }
+
+    if (!plannerWaypoints[selectedPlannerWaypointIndex]) {
+      setSelectedPlannerWaypointIndex(Math.min(selectedPlannerWaypointIndex, plannerWaypoints.length - 1));
+    }
+  }, [plannerWaypoints, selectedPlannerWaypointIndex]);
+
+  useEffect(() => {
+    if (!token || !selectedPlannerWaypoint || swarmPresets.length > 0) {
+      return;
+    }
+
+    api
+      .fetchScenarioPresets()
+      .then((result) => {
+        setSwarmPresets(result.presets as ScenarioPreset[]);
+      })
+      .catch(() => {
+        // Keep drawer usable even if preset fetch fails.
+      });
+  }, [api, selectedPlannerWaypoint, swarmPresets.length, token]);
+
+  const resetMissionWorkspace = useCallback(
+    (message?: string) => {
+      setSelectedPlannerWaypointIndex(null);
+      clearPlannerWaypoints();
+      setPlannerEnabled(false);
+      clearGeofenceDrawPoints();
+      setTrailResetToken((value) => value + 1);
+      if (message) {
+        setStatus(message);
+      }
+    },
+    [clearPlannerWaypoints, setPlannerEnabled, clearGeofenceDrawPoints]
+  );
+
+  const showMissionOutcome = useCallback((outcome: MissionOutcome, resetWorkspace = false) => {
+    setMissionOutcome(outcome);
+    if (resetWorkspace) {
+      resetMissionWorkspace();
+    }
+  }, [resetMissionWorkspace]);
+
+  const acknowledgeMissionOutcome = useCallback(() => {
+    setMissionOutcome(null);
+    resetMissionWorkspace("Mission workspace reset");
+  }, [resetMissionWorkspace]);
+
+  useEffect(() => {
+    if (!selectedDroneId || !selectedTelemetry) {
+      return;
+    }
+
+    const mode = selectedTelemetry.mode ?? "";
+    const previousMode = previousSelectedModeRef.current;
+    previousSelectedModeRef.current = mode;
+
+    if (mode !== previousMode) {
+      const banner = rtlBannerForMode(selectedDroneId, mode);
+      if (banner) {
+        showRtlBanner(banner);
+        setStatus(banner.subtitle);
+      }
+    }
+
+    if (mode.startsWith("mission-complete") && !previousMode.startsWith("mission-complete")) {
+      showMissionOutcome(
+        {
+          type: "success",
+          title: "MISSION SUCCESSFUL",
+          subtitle: `${selectedDroneId} completed route and returned to launch`
+        },
+        false
+      );
+      setStatus(`${selectedDroneId}: mission successful`);
+      return;
+    }
+
+    if (
+      (mode.startsWith("rtl-mission") || mode.startsWith("rtl-low-battery") || mode.startsWith("rtl-low-signal")) &&
+      previousMode.startsWith("mission-wp-")
+    ) {
+      setStatus(`${selectedDroneId}: automatic RTL engaged`);
+    }
+  }, [selectedDroneId, selectedTelemetry, showMissionOutcome, showRtlBanner]);
+
+  useEffect(() => {
+    if (!selectedDroneId || alerts.length === 0) {
+      return;
+    }
+
+    const latest = alerts.find((alert) => alert.droneId === selectedDroneId);
+    if (!latest) {
+      return;
+    }
+
+    const key = `${latest.timestamp}:${latest.message}`;
+    if (lastSelectedAlertRef.current === key) {
+      return;
+    }
+    lastSelectedAlertRef.current = key;
+
+    const message = latest.message.toLowerCase();
+    if (message.includes("mission complete")) {
+      showMissionOutcome(
+        {
+          type: "success",
+          title: "MISSION SUCCESSFUL",
+          subtitle: `${selectedDroneId} completed route and returned to launch`
+        },
+        false
+      );
+      setStatus(`${selectedDroneId}: mission successful`);
+      return;
+    }
+
+    if (message.includes("swarm")) {
+      setStatus(latest.message);
+    }
+
+    const banner = rtlBannerForAlert(selectedDroneId, latest.message);
+    if (banner) {
+      showRtlBanner(banner);
+      setStatus(latest.message);
+    }
+  }, [alerts, selectedDroneId, showMissionOutcome, showRtlBanner]);
+
+  const refresh = useCallback(async () => {
+    if (!token) return;
+    setBusy(true);
+    try {
+      const [dronesResponse, missionsResponse, geofenceResponse, swarmResponse] = await Promise.all([
+        api.fetchDrones(),
+        api.fetchMissions(),
+        api.fetchGeofences(),
+        api.fetchSwarmGroups()
+      ]);
+      setDrones(dronesResponse.drones);
+      setMissions(missionsResponse.missions);
+      setGeofences(geofenceResponse.geofences);
+      setSwarmGroups(swarmResponse.groups as SwarmGroup[]);
+      const liveCount = dronesResponse.drones.filter((drone) => !drone.archivedAt).length;
+      const archivedCount = dronesResponse.drones.length - liveCount;
+      setStatus(`Synced ${liveCount} live drones${archivedCount > 0 ? ` | ${archivedCount} archived` : ""}`);
+    } catch (error) {
+      setStatus((error as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }, [api, token, setBusy, setDrones, setMissions, setGeofences, setSwarmGroups]);
+
+  useEffect(() => {
+    refresh().catch(() => {});
+  }, [refresh]);
+
+  const run = async (fn: () => Promise<void>): Promise<void> => {
+    setBusy(true);
+    try {
+      await fn();
+    } catch (error) {
+      setStatus((error as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const sendManualControl = useCallback(
+    (input: { forward: number; right: number; up: number; yawRate: number; nowMs: number }) => {
+      if (!selectedDroneId) {
+        return;
+      }
+
+      const socket = manualSocketRef.current;
+      if (socket?.readyState === WebSocket.OPEN) {
+        socket.send(
+          JSON.stringify({
+            type: "manual-control",
+            droneId: selectedDroneId,
+            ...input
+          })
+        );
+        return;
+      }
+
+      // Fallback path in case WS has not connected yet.
+      api.commandDrone(selectedDroneId, "manualControl", input).catch(() => {
+        // no-op
+      });
+    },
+    [api, selectedDroneId]
+  );
+
+  const handleRegisterDrone = useCallback(
+    (input: { id: string; name?: string; homeLat: number; homeLon: number; homeAlt?: number }) => {
+      run(async () => {
+        await api.registerDrone({ ...input, adapter: "mock" });
+        await refresh();
+        setSelectedDrone(input.id);
+        setStatus(`Drone ${input.id} registered`);
+      }).catch(() => {});
+    },
+    [api, refresh, setSelectedDrone]
+  );
+
+  const handleUpdateDroneHome = useCallback(
+    (droneId: string, input: { homeLat: number; homeLon: number; homeAlt?: number }) => {
+      run(async () => {
+        await api.updateDroneHome(droneId, input);
+        await refresh();
+        setStatus(`Home updated for ${droneId}`);
+      }).catch(() => {});
+    },
+    [api, refresh]
+  );
+
+  const handleDeleteDrone = useCallback(
+    (droneId: string) => {
+      if (!window.confirm(`Delete drone ${droneId}? This will remove its missions and telemetry history.`)) {
+        return;
+      }
+
+      run(async () => {
+        await api.deleteDrone(droneId);
+        setSwarmGroups(
+          swarmGroups.filter(
+            (group) => group.leaderId !== droneId && !group.followerIds.includes(droneId)
+          )
+        );
+        if (selectedDroneId === droneId) {
+          setSelectedDrone(null);
+        }
+        await refresh();
+        setStatus(`Drone ${droneId} deleted`);
+      }).catch(() => {});
+    },
+    [api, refresh, selectedDroneId, setSelectedDrone, setSwarmGroups, swarmGroups]
+  );
+
+  const handleArchiveDrone = useCallback(
+    (droneId: string, archived: boolean) => {
+      if (
+        !window.confirm(
+          archived ? `Archive drone ${droneId}? It will be removed from live ops.` : `Restore drone ${droneId} to live ops?`
+        )
+      ) {
+        return;
+      }
+
+      run(async () => {
+        await api.setDroneArchived(droneId, archived);
+        if (archived) {
+          setSwarmGroups(
+            swarmGroups.filter(
+              (group) => group.leaderId !== droneId && !group.followerIds.includes(droneId)
+            )
+          );
+          if (selectedDroneId === droneId) {
+            setSelectedDrone(null);
+          }
+        }
+        await refresh();
+        setStatus(`Drone ${droneId} ${archived ? "archived" : "restored"}`);
+      }).catch(() => {});
+    },
+    [api, refresh, selectedDroneId, setSelectedDrone, setSwarmGroups, swarmGroups]
+  );
+
+  const handleCreateGeofence = useCallback(
+    (name: string, _polygon: Array<{ lat: number; lon: number }>) => {
+      run(async () => {
+        // TODO: call geofence creation API once endpoint is finalized.
+        clearGeofenceDrawPoints();
+        await refresh();
+        setStatus(`Geofence "${name}" created`);
+      }).catch(() => {});
+    },
+    [clearGeofenceDrawPoints, refresh]
+  );
+
+  const handleImportMission = useCallback(
+    (waypoints: import("./types/domain").MissionWaypoint[], name: string) => {
+      setPlannerWaypoints(waypoints);
+      setPlannerEnabled(true);
+      setSelectedPlannerWaypointIndex(waypoints.length > 0 ? 0 : null);
+      setMissionRailOpen("mission");
+      setStatus(`Imported ${waypoints.length} waypoints from "${name}"`);
+    },
+    [setPlannerWaypoints, setPlannerEnabled]
+  );
+
+  const handleAddPlannerWaypoint = useCallback(
+    (waypoint: import("./types/domain").MissionWaypoint) => {
+      addPlannerWaypoint({
+        ...waypoint,
+        alt: waypointDefaults.alt,
+        hover: waypointDefaults.hover,
+        cameraPitch: waypointDefaults.cameraPitch,
+        speed: waypointDefaults.speed,
+        heading: waypointDefaults.heading,
+        cameraViewMode: waypointDefaults.cameraViewMode,
+        fpvPitch: waypointDefaults.fpvPitch,
+        fpvYaw: waypointDefaults.fpvYaw,
+        fpvZoom: waypointDefaults.fpvZoom,
+      });
+    },
+    [addPlannerWaypoint, waypointDefaults]
+  );
+
+  const handleSelectPlannerWaypoint = useCallback((index: number | null) => {
+    setSelectedPlannerWaypointIndex(index);
+    if (index !== null) {
+      setMissionRailOpen("mission");
+    }
+  }, []);
+
+  const handleClearPlanner = useCallback(() => {
+    setSelectedPlannerWaypointIndex(null);
+    clearPlannerWaypoints();
+  }, [clearPlannerWaypoints]);
+
+  const handleRemovePlannerWaypoint = useCallback(() => {
+    if (selectedPlannerWaypointIndex === null) {
+      return;
+    }
+
+    const removedIndex = selectedPlannerWaypointIndex;
+    removePlannerWaypoint(removedIndex);
+    if (plannerWaypoints.length <= 1) {
+      setSelectedPlannerWaypointIndex(null);
+      return;
+    }
+
+    setSelectedPlannerWaypointIndex(Math.max(0, removedIndex - 1));
+  }, [plannerWaypoints.length, removePlannerWaypoint, selectedPlannerWaypointIndex]);
+
+  const handleMissionUpload = useCallback(() => {
+    if (!selectedDroneId || plannerWaypoints.length === 0) {
+      setStatus("Select a drone and add waypoints");
+      return;
+    }
+    run(async () => {
+      const missionName = plannerMissionName || `Mission-${new Date().toISOString()}`;
+      const waypointCount = plannerWaypoints.length;
+      await api.createMission({
+        droneId: selectedDroneId,
+        name: missionName,
+        waypoints: plannerWaypoints
+      });
+      setSelectedPlannerWaypointIndex(null);
+      clearPlannerWaypoints();
+      setPlannerEnabled(false);
+      await refresh();
+      setStatus(`Mission uploaded: ${missionName} (${waypointCount} waypoints)`);
+    }).catch(() => {});
+  }, [api, clearPlannerWaypoints, plannerMissionName, plannerWaypoints, refresh, selectedDroneId, setPlannerEnabled]);
+
+  const handleMissionExecute = useCallback(() => {
+    if (!selectedDroneId || !latestMissionForSelectedDrone) {
+      setStatus("No uploaded mission found for selected drone");
+      return;
+    }
+    run(async () => {
+      setMissionOutcome(null);
+      await api.executeMission(latestMissionForSelectedDrone.id);
+      await refresh();
+      setStatus(`Mission execution started: ${latestMissionForSelectedDrone.name}`);
+    }).catch(() => {});
+  }, [api, latestMissionForSelectedDrone, refresh, selectedDroneId]);
+
+  // ----- Login screen -----
+  if (!token || !user) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-grid px-4">
+        <div className="panel w-full max-w-md p-6">
+          <h1 className="font-display text-2xl tracking-[0.16em] text-white">SPAXELS GROUND CONTROL X</h1>
+          <p className="mt-1 text-[11px] uppercase tracking-[0.12em] text-cyan-100/50">SGC-X Authenticated Control Channel</p>
+
+          <form
+            className="mt-5 space-y-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              run(async () => {
+                const response = await api.login(loginEmail, loginPassword);
+                setSession(response.token, response.user);
+                setStatus("Authentication successful");
+              }).catch(() => {});
+            }}
+          >
+            <input
+              className="input"
+              value={loginEmail}
+              onChange={(event) => setLoginEmail(event.target.value)}
+              placeholder="Email"
+            />
+            <input
+              className="input"
+              value={loginPassword}
+              onChange={(event) => setLoginPassword(event.target.value)}
+              placeholder="Password"
+              type="password"
+            />
+            <button className="btn-primary w-full" type="submit" disabled={busy}>
+              {busy ? "Authorizing..." : "Enter Control Core"}
+            </button>
+          </form>
+
+          <div className="mt-3 text-[10px] text-cyan-100/40">Default admin credentials are loaded from API environment.</div>
+          {status ? <div className="mt-2 text-xs text-accent-amber">{status}</div> : null}
+        </div>
+      </div>
+    );
+  }
+
+  // ----- Main application -----
+  return (
+    <div className="flex h-screen flex-col overflow-hidden bg-grid">
+      <TopBar
+        user={user}
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+        cameraMode={cameraMode}
+        onCameraMode={setCameraMode}
+        onLogout={clearSession}
+        autoEngage={autoEngage}
+        onAutoEngageToggle={setAutoEngage}
+        onKillSwitch={
+          user.role === "ADMIN"
+            ? () => {
+                run(async () => {
+                  await api.setKillSwitch(true);
+                  setStatus("Kill switch engaged");
+                }).catch(() => {});
+              }
+            : undefined
+        }
+      />
+
+      {activeTab === "swarm" ? (
+        <div className="min-h-0 flex-1">
+          <SwarmManagerPanel
+            drones={activeDrones}
+            telemetryByDrone={telemetryByDrone}
+            swarmGroups={swarmGroups}
+            onCreateGroup={async (input) => {
+              setBusy(true);
+              try {
+                const result = await api.createSwarmGroup(input);
+                const created = result.group as SwarmGroup;
+                addSwarmGroup(created);
+                setStatus(`Swarm group "${input.name}" created`);
+                return created;
+              } catch (error) {
+                setStatus((error as Error).message);
+                throw error;
+              } finally {
+                setBusy(false);
+              }
+            }}
+            onDeleteGroup={(groupId) => {
+              run(async () => {
+                await api.disbandSwarmGroup(groupId);
+                removeSwarmGroup(groupId);
+                setStatus("Swarm group disbanded");
+              }).catch(() => {});
+            }}
+            onDisengageGroup={(groupId) => {
+              run(async () => {
+                await api.disengageSwarmGroup(groupId);
+                updateSwarmGroup(groupId, { state: "IDLE", maneuver: undefined });
+                setStatus("Swarm group disengaged");
+              }).catch(() => {});
+            }}
+            onEngageGroup={(groupId) => {
+              const group = swarmGroups.find((g) => g.id === groupId);
+              if (!group) return;
+              const leaderTel = telemetryByDrone[group.leaderId];
+              if (!leaderTel) {
+                setStatus("Leader drone has no telemetry — arm and takeoff first");
+                return;
+              }
+              run(async () => {
+                await api.engageSwarmGroup(groupId, leaderTel.position);
+                updateSwarmGroup(groupId, { state: "FORMING" });
+                setStatus(`Swarm "${group.name}" engaged — followers tracking leader in ${group.formation} formation`);
+              }).catch(() => {});
+            }}
+            onUpdateGroup={(groupId, patch) => {
+              run(async () => {
+                await api.updateSwarmGroup(groupId, patch);
+                updateSwarmGroup(groupId, patch);
+              }).catch(() => {});
+            }}
+            onStartManeuver={(groupId, type, params) => {
+              run(async () => {
+                await api.startManeuver(groupId, type, params);
+                updateSwarmGroup(groupId, { state: "MANEUVERING", maneuver: type });
+                setStatus(`Maneuver ${type} started`);
+              }).catch(() => {});
+            }}
+            onStopManeuver={(groupId) => {
+              run(async () => {
+                await api.stopManeuver(groupId);
+                setStatus("Maneuver stop requested");
+              }).catch(() => {});
+            }}
+            onFetchPresets={async () => {
+              const result = await api.fetchScenarioPresets();
+              setSwarmPresets(result.presets as ScenarioPreset[]);
+              return result.presets as never;
+            }}
+            onUpdatePreset={async (presetId, patch) => {
+              const result = await api.updateScenarioPresetDefaults(presetId, patch);
+              const updated = result.preset as ScenarioPreset;
+              setSwarmPresets((current) =>
+                current.some((preset) => preset.id === updated.id)
+                  ? current.map((preset) => (preset.id === updated.id ? updated : preset))
+                  : [...current, updated]
+              );
+              return updated;
+            }}
+            onResetPreset={async (presetId) => {
+              const result = await api.resetScenarioPresetDefaults(presetId);
+              const resetPreset = result.preset as ScenarioPreset;
+              setSwarmPresets((current) =>
+                current.some((preset) => preset.id === resetPreset.id)
+                  ? current.map((preset) => (preset.id === resetPreset.id ? resetPreset : preset))
+                  : [...current, resetPreset]
+              );
+              return resetPreset;
+            }}
+          />
+        </div>
+      ) : activeTab === "records" ? (
+        <div className="min-h-0 flex-1">
+          <RecordsPanel
+            sessions={videoRecorder.sessions}
+            onDeleteSession={videoRecorder.deleteSession}
+            onClearAll={videoRecorder.clearAllSessions}
+          />
+        </div>
+      ) : activeTab === "mission" ? (
+        <>
+          <main className="grid min-h-0 flex-1 gap-2 p-2 lg:grid-cols-[minmax(0,1fr)_420px]">
+            <section ref={globeSectionRef} className="panel relative min-h-0 overflow-hidden">
+              <GlobeViewer
+                drones={activeDrones}
+                telemetryByDrone={telemetryByDrone}
+                telemetryHistoryByDrone={telemetryHistoryByDrone}
+                geofences={geofences}
+                missions={missions}
+                selectedDroneId={selectedDroneId}
+                plannerEnabled={plannerEnabled}
+                plannerWaypoints={plannerWaypoints}
+                selectedPlannerWaypointIndex={selectedPlannerWaypointIndex}
+                cameraMode={cameraMode}
+                fpvPitchDeg={fpvPitchDeg}
+                trailResetToken={trailResetToken}
+                onAddWaypoint={handleAddPlannerWaypoint}
+                onUpdateWaypoint={updatePlannerWaypoint}
+                onSelectPlannerWaypoint={handleSelectPlannerWaypoint}
+                swarmGroups={swarmGroups}
+                onSelectDrone={setSelectedDrone}
+              />
+	              <RecordingOverlay
+	                recording={videoRecorder.recording}
+	                activeRecordings={videoRecorder.activeRecordings}
+	                cameraMode={cameraMode}
+	                selectedDroneId={selectedDroneId}
+	                onStartRecording={handleStartVideoRecording}
+	                onStopRecording={videoRecorder.stopRecording}
+	                onStopAll={videoRecorder.stopAllRecordings}
+	              />
+	              <FlightHud
+	                drones={activeDrones}
+	                telemetryByDrone={telemetryByDrone}
+	                telemetryHistoryByDrone={telemetryHistoryByDrone}
+	                missions={missions}
+	                swarmGroups={swarmGroups}
+	                selectedDroneId={selectedDroneId}
+	                cameraMode={cameraMode}
+	              />
+                {selectedPlannerWaypoint && selectedPlannerWaypointIndex !== null ? (
+                  <WaypointEditorDrawer
+                    waypoint={selectedPlannerWaypoint}
+                    waypointIndex={selectedPlannerWaypointIndex}
+                    waypointCount={plannerWaypoints.length}
+                    eligibleSwarmGroups={eligibleTriggerSwarmGroups}
+                    swarmPresets={swarmPresets}
+                    onUpdate={(patch) => updatePlannerWaypoint(selectedPlannerWaypointIndex, patch)}
+                    onClose={() => setSelectedPlannerWaypointIndex(null)}
+                    onDelete={handleRemovePlannerWaypoint}
+                    onSelectIndex={setSelectedPlannerWaypointIndex}
+                  />
+                ) : null}
+	              {rtlBanner ? (
+	                <div className="pointer-events-none absolute left-1/2 top-4 z-20 -translate-x-1/2">
+	                  <div
+	                    className={
+	                      rtlBanner.tone === "danger"
+	                        ? "rounded border border-accent-red/70 bg-black/85 px-5 py-2.5 text-center shadow-[0_0_24px_rgba(255,72,99,0.28)]"
+	                        : "rounded border border-amber-300/60 bg-black/85 px-5 py-2.5 text-center shadow-[0_0_24px_rgba(245,188,66,0.25)]"
+	                    }
+	                  >
+	                    <div
+	                      className={
+	                        rtlBanner.tone === "danger"
+	                          ? "font-display text-[18px] tracking-[0.16em] text-accent-red"
+	                          : "font-display text-[18px] tracking-[0.16em] text-amber-300"
+	                      }
+	                    >
+	                      {rtlBanner.title}
+	                    </div>
+	                    <div className="mt-1 text-[11px] tracking-[0.12em] text-cyan-100/75">{rtlBanner.subtitle}</div>
+	                  </div>
+	                </div>
+	              ) : null}
+	              {missionOutcome ? (
+	                <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-black/20">
+                  <div
+                    className={
+                      missionOutcome.type === "success"
+                        ? "rounded border border-accent-green/60 bg-black/80 px-8 py-6 text-center shadow-[0_0_36px_rgba(90,245,140,0.35)]"
+                        : "rounded border border-accent-red/60 bg-black/80 px-8 py-6 text-center shadow-[0_0_36px_rgba(255,72,99,0.35)]"
+                    }
+                  >
+                    <div
+                      className={
+                        missionOutcome.type === "success"
+                          ? "font-display text-3xl tracking-[0.18em] text-accent-green"
+                          : "font-display text-3xl tracking-[0.18em] text-accent-red"
+                      }
+                    >
+                      {missionOutcome.title}
+                    </div>
+                    <div className="mt-2 text-[12px] tracking-[0.12em] text-cyan-100/75">{missionOutcome.subtitle}</div>
+                  </div>
+                </div>
+              ) : null}
+            </section>
+
+            <div className="flex min-h-0 flex-col gap-2 overflow-hidden">
+              <AccordionSection
+                title="Fleet Control"
+                subtitle={`${activeDrones.length} live drones`}
+                open={missionRailOpen === "fleet"}
+                onToggle={() => setMissionRailOpen((current) => (current === "fleet" ? null : "fleet"))}
+              >
+                <FleetPanel
+                  embedded
+                  drones={drones}
+                  telemetryByDrone={telemetryByDrone}
+                  swarmGroups={swarmGroups}
+                  selectedDroneId={selectedDroneId}
+                  onSelectDrone={setSelectedDrone}
+                  onRegisterDrone={handleRegisterDrone}
+                  onUpdateDroneHome={handleUpdateDroneHome}
+                  onArchiveDrone={handleArchiveDrone}
+                  onDeleteDrone={handleDeleteDrone}
+                />
+              </AccordionSection>
+
+              <AccordionSection
+                title="Swarm Group Ops"
+                subtitle={`${swarmGroups.filter((g) => g.state !== "DISBANDING").length} groups`}
+                open={missionRailOpen === "swarmops"}
+                onToggle={() => setMissionRailOpen((current) => (current === "swarmops" ? null : "swarmops"))}
+              >
+                <div className="min-h-0 overflow-auto p-2">
+                  <SwarmGroupOps
+                    swarmGroups={swarmGroups}
+                    selectedDroneId={selectedDroneId}
+                    selectedWaypoint={selectedPlannerWaypoint}
+                    selectedWaypointIndex={selectedPlannerWaypointIndex}
+                    eligibleMissionGroups={eligibleTriggerSwarmGroups}
+                    swarmPresets={swarmPresets}
+                    onUpdateSelectedWaypoint={
+                      selectedPlannerWaypointIndex !== null
+                        ? (patch) => updatePlannerWaypoint(selectedPlannerWaypointIndex, patch)
+                        : undefined
+                    }
+                    onGroupCommand={(groupId, command, params) => {
+                      const group = swarmGroups.find((g) => g.id === groupId);
+                      if (!group) return;
+                      const allDroneIds = [group.leaderId, ...group.followerIds];
+                      run(async () => {
+                        await Promise.all(
+                          allDroneIds.map((droneId) =>
+                            api.commandDrone(
+                              droneId,
+                              command,
+                              params ?? (command === "takeoff" ? { altitude: 60 } : undefined)
+                            )
+                          )
+                        );
+                        setStatus(`Group command ${command} sent to ${group.name} (${allDroneIds.length} drones)`);
+                      }).catch(() => {});
+                    }}
+                    onEngage={(groupId) => {
+                      const group = swarmGroups.find((g) => g.id === groupId);
+                      if (!group) return;
+                      const leaderTel = telemetryByDrone[group.leaderId];
+                      if (!leaderTel) {
+                        setStatus("Cannot engage: no telemetry for leader drone");
+                        return;
+                      }
+                      run(async () => {
+                        await api.engageSwarmGroup(groupId, leaderTel.position);
+                        updateSwarmGroup(groupId, { state: "FORMING" });
+                        setStatus(`Swarm "${group.name}" engaged — followers tracking leader in ${group.formation} formation`);
+                      }).catch(() => {});
+                    }}
+                    onDisengage={(groupId) => {
+                      run(async () => {
+                        await api.disengageSwarmGroup(groupId);
+                        updateSwarmGroup(groupId, { state: "IDLE", maneuver: undefined });
+                        setStatus("Swarm group disengaged");
+                      }).catch(() => {});
+                    }}
+                  />
+                </div>
+              </AccordionSection>
+
+              <AccordionSection
+                title="Mission Planner"
+                subtitle={`${plannerWaypoints.length} waypoint${plannerWaypoints.length === 1 ? "" : "s"}`}
+                open={missionRailOpen === "mission"}
+                onToggle={() => setMissionRailOpen((current) => (current === "mission" ? null : "mission"))}
+              >
+                <MissionPlannerPanel
+                  embedded
+                  plannerEnabled={plannerEnabled}
+                  waypoints={plannerWaypoints}
+                  selectedMissionName={latestMissionForSelectedDrone?.name}
+                  selectedWaypointIndex={selectedPlannerWaypointIndex}
+                  canExecuteMission={Boolean(selectedDroneId && latestMissionForSelectedDrone)}
+                  missionOutcome={missionOutcome}
+                  missionName={plannerMissionName}
+                  onMissionNameChange={setPlannerMissionName}
+                  waypointDefaults={waypointDefaults}
+                  onWaypointDefaultsChange={setWaypointDefaults}
+                  onApplyDefaultsToAll={applyDefaultsToAll}
+                  onTogglePlanner={setPlannerEnabled}
+                  onImportFile={handleImportMission}
+                  onClear={handleClearPlanner}
+                  onCompleteMission={acknowledgeMissionOutcome}
+                  onUpload={handleMissionUpload}
+                  onExecuteMission={handleMissionExecute}
+                />
+              </AccordionSection>
+
+              <AccordionSection
+                title="Geofences"
+                subtitle={`${geofences.length} defined`}
+                open={missionRailOpen === "geofences"}
+                onToggle={() => setMissionRailOpen((current) => (current === "geofences" ? null : "geofences"))}
+              >
+                <GeofencePanel
+                  embedded
+                  geofences={geofences}
+                  onCreateGeofence={handleCreateGeofence}
+                  onToggleGeofence={(id, isActive) => {
+                    setStatus(`Geofence ${id} ${isActive ? "activated" : "deactivated"}`);
+                  }}
+                  onDeleteGeofence={(id) => {
+                    setStatus(`Geofence ${id} deleted`);
+                  }}
+                  drawingMode={geofenceDrawing}
+                  onToggleDrawing={setGeofenceDrawingState}
+                  drawPoints={geofenceDrawPoints}
+                />
+              </AccordionSection>
+            </div>
+          </main>
+
+          <div className="px-2 pb-2">
+	            <div className="panel flex items-center px-3 py-1.5 text-[11px] text-cyan-100/60">
+	              {status || `Planner ready | Fleet ${activeDrones.length} live | Missions ${missions.length}`}
+	            </div>
+          </div>
+
+        </>
+      ) : (
+        <>
+          <main className="grid min-h-0 flex-1 gap-2 p-2 lg:grid-cols-[280px_minmax(0,1fr)_260px] lg:grid-rows-[minmax(0,1fr)_300px]">
+            {/* Left column: Fleet */}
+	            <FleetPanel
+		              drones={drones}
+		              telemetryByDrone={telemetryByDrone}
+                  swarmGroups={swarmGroups}
+		              selectedDroneId={selectedDroneId}
+		              onSelectDrone={setSelectedDrone}
+		              onRegisterDrone={handleRegisterDrone}
+		              onUpdateDroneHome={handleUpdateDroneHome}
+                  onArchiveDrone={handleArchiveDrone}
+                onDeleteDrone={handleDeleteDrone}
+		            />
+
+            {/* Center: Globe */}
+            <section ref={globeSectionRef} className="panel relative min-h-0 overflow-hidden">
+              <GlobeViewer
+                drones={activeDrones}
+                telemetryByDrone={telemetryByDrone}
+                telemetryHistoryByDrone={telemetryHistoryByDrone}
+                geofences={geofences}
+                missions={missions}
+                selectedDroneId={selectedDroneId}
+                plannerEnabled={plannerEnabled}
+                plannerWaypoints={plannerWaypoints}
+                selectedPlannerWaypointIndex={selectedPlannerWaypointIndex}
+                cameraMode={cameraMode}
+                fpvPitchDeg={fpvPitchDeg}
+                trailResetToken={trailResetToken}
+                onAddWaypoint={handleAddPlannerWaypoint}
+                onUpdateWaypoint={updatePlannerWaypoint}
+                onSelectPlannerWaypoint={handleSelectPlannerWaypoint}
+                swarmGroups={swarmGroups}
+                onSelectDrone={setSelectedDrone}
+              />
+	              <RecordingOverlay
+	                recording={videoRecorder.recording}
+	                activeRecordings={videoRecorder.activeRecordings}
+	                cameraMode={cameraMode}
+	                selectedDroneId={selectedDroneId}
+	                onStartRecording={handleStartVideoRecording}
+	                onStopRecording={videoRecorder.stopRecording}
+	                onStopAll={videoRecorder.stopAllRecordings}
+	              />
+	              <FlightHud
+	                drones={activeDrones}
+	                telemetryByDrone={telemetryByDrone}
+	                telemetryHistoryByDrone={telemetryHistoryByDrone}
+	                missions={missions}
+	                swarmGroups={swarmGroups}
+	                selectedDroneId={selectedDroneId}
+	                cameraMode={cameraMode}
+	              />
+	              {rtlBanner ? (
+	                <div className="pointer-events-none absolute left-1/2 top-4 z-20 -translate-x-1/2">
+	                  <div
+	                    className={
+	                      rtlBanner.tone === "danger"
+	                        ? "rounded border border-accent-red/70 bg-black/85 px-5 py-2.5 text-center shadow-[0_0_24px_rgba(255,72,99,0.28)]"
+	                        : "rounded border border-amber-300/60 bg-black/85 px-5 py-2.5 text-center shadow-[0_0_24px_rgba(245,188,66,0.25)]"
+	                    }
+	                  >
+	                    <div
+	                      className={
+	                        rtlBanner.tone === "danger"
+	                          ? "font-display text-[18px] tracking-[0.16em] text-accent-red"
+	                          : "font-display text-[18px] tracking-[0.16em] text-amber-300"
+	                      }
+	                    >
+	                      {rtlBanner.title}
+	                    </div>
+	                    <div className="mt-1 text-[11px] tracking-[0.12em] text-cyan-100/75">{rtlBanner.subtitle}</div>
+	                  </div>
+	                </div>
+	              ) : null}
+	              {missionOutcome ? (
+	                <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-black/20">
+                  <div
+                    className={
+                      missionOutcome.type === "success"
+                        ? "rounded border border-accent-green/60 bg-black/80 px-8 py-6 text-center shadow-[0_0_36px_rgba(90,245,140,0.35)]"
+                        : "rounded border border-accent-red/60 bg-black/80 px-8 py-6 text-center shadow-[0_0_36px_rgba(255,72,99,0.35)]"
+                    }
+                  >
+                    <div
+                      className={
+                        missionOutcome.type === "success"
+                          ? "font-display text-3xl tracking-[0.18em] text-accent-green"
+                          : "font-display text-3xl tracking-[0.18em] text-accent-red"
+                      }
+                    >
+                      {missionOutcome.title}
+                    </div>
+                    <div className="mt-2 text-[12px] tracking-[0.12em] text-cyan-100/75">{missionOutcome.subtitle}</div>
+                  </div>
+                </div>
+              ) : null}
+            </section>
+
+            {/* Right column: Gauges + Camera feeds */}
+            <div className="flex min-h-0 flex-col gap-2">
+              <TelemetryGauges
+                selectedDroneId={selectedDroneId}
+                telemetryByDrone={telemetryByDrone}
+              />
+              <CameraFeeds
+                drones={activeDrones}
+                telemetryByDrone={telemetryByDrone}
+                selectedDroneId={selectedDroneId}
+              />
+            </div>
+
+            {/* Bottom left: Command + Manual Flight */}
+            <div className="min-h-0 space-y-2 overflow-auto">
+              <CommandPanel
+                selectedDroneId={selectedDroneId}
+                telemetry={selectedTelemetry}
+                cameraMode={cameraMode}
+                fpvPitchDeg={fpvPitchDeg}
+                onFpvPitchChange={setFpvPitchDeg}
+                onCommand={(type, params) => {
+                  if (!selectedDroneId) return;
+                  const missionWasRunning = Boolean(selectedTelemetry?.mode?.startsWith("mission-wp-"));
+                  run(async () => {
+                    await api.commandDrone(
+                      selectedDroneId,
+                      type,
+                      params ?? (type === "takeoff" ? { altitude: 60 } : undefined)
+                    );
+                    if (type === "rtl" && missionWasRunning) {
+                      showMissionOutcome(
+                        {
+                          type: "aborted",
+                          title: "MISSION ABORTED",
+                          subtitle: `${selectedDroneId} returning to launch`
+                        },
+                        true
+                      );
+                    }
+                    setStatus(`Command ${type} sent to ${selectedDroneId}`);
+                  }).catch(() => {});
+                }}
+              />
+              {activeTab === "fleet" && (
+                <ManualFlightPanel
+                  selectedDroneId={selectedDroneId}
+                  onManualControl={sendManualControl}
+                  recording={flightRecorder.recording}
+                  onToggleRecording={flightRecorder.toggleRecording}
+                  onSaveRecording={() => {
+                    const waypoints = flightRecorder.saveAsWaypoints();
+                    if (waypoints.length === 0 || !selectedDroneId) return;
+                    run(async () => {
+                      const missionName = `Recorded-${new Date().toISOString().slice(0, 19)}`;
+                      await api.createMission({
+                        droneId: selectedDroneId,
+                        name: missionName,
+                        waypoints
+                      });
+                      flightRecorder.clear();
+                      await refresh();
+                      setStatus(`Recorded path saved as mission: ${missionName} (${waypoints.length} waypoints)`);
+                    }).catch(() => {});
+                  }}
+                  recordedPoints={flightRecorder.recordedPoints}
+                />
+              )}
+            </div>
+
+            {/* Bottom center: Waypoint Viewer */}
+            <div className="panel min-h-0 overflow-auto p-2">
+              <WaypointOpsPanel
+                drones={activeDrones}
+                telemetryByDrone={telemetryByDrone}
+                missions={missions}
+                selectedDroneId={selectedDroneId}
+                missionOutcome={missionOutcome}
+                onCompleteMission={acknowledgeMissionOutcome}
+              />
+            </div>
+
+            {/* Bottom right: Status */}
+            <div className="panel flex items-center px-3 py-1.5 text-[11px] text-cyan-100/60">
+              {status || `Fleet ${activeDrones.length} live | Alerts ${alerts.length} | Missions ${missions.length}`}
+            </div>
+          </main>
+        </>
+      )}
+    </div>
+  );
+}

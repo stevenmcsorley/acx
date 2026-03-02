@@ -1,0 +1,38 @@
+{
+  "name": "@sgcx/api",
+  "version": "1.0.0",
+  "private": true,
+  "main": "dist/main.js",
+  "scripts": {
+    "dev": "ts-node-dev --respawn --transpile-only src/main.ts",
+    "dev:sim": "ts-node-dev --respawn --transpile-only src/simulation-runner.ts",
+    "build": "npm run db:generate && npm run build --workspace @sgcx/shared-types && tsc -p tsconfig.json",
+    "start": "node dist/main.js",
+    "start:sim": "node dist/simulation-runner.js",
+    "db:push": "prisma db push",
+    "db:generate": "prisma generate"
+  },
+  "dependencies": {
+    "@fastify/cors": "^10.1.0",
+    "@fastify/websocket": "^11.0.2",
+    "@prisma/client": "^6.5.0",
+    "@sgcx/shared-types": "1.0.0",
+    "bcryptjs": "^2.4.3",
+    "dotenv": "^16.4.5",
+    "fastify": "^5.2.1",
+    "ioredis": "^5.4.2",
+    "jsonwebtoken": "^9.0.2",
+    "ws": "^8.18.1",
+    "uuid": "^11.1.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/jsonwebtoken": "^9.0.8",
+    "@types/node": "^22.13.10",
+    "@types/ws": "^8.5.14",
+    "prisma": "^6.5.0",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.8.2"
+  }
+}

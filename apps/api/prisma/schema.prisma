@@ -1,0 +1,145 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  OPERATOR
+  SUPERVISOR
+  ADMIN
+  OBSERVER
+}
+
+enum AdapterType {
+  MOCK
+  MAVLINK
+  DJI
+  CUSTOM
+}
+
+enum FlightState {
+  GROUNDED
+  ARMED
+  TAKING_OFF
+  AIRBORNE
+  LANDING
+  RTL
+  EMERGENCY
+}
+
+model User {
+  id           String      @id @default(cuid())
+  email        String      @unique
+  displayName  String
+  role         UserRole
+  passwordHash String
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  audits       CommandAudit[]
+}
+
+model Drone {
+  id               String      @id
+  name             String
+  adapter          AdapterType
+  archivedAt       DateTime?
+  homeLat          Float
+  homeLon          Float
+  homeAlt          Float       @default(0)
+  status           FlightState @default(GROUNDED)
+  lastKnownLat     Float?
+  lastKnownLon     Float?
+  lastKnownAlt     Float?
+  lastBatteryPct   Float?
+  lastSignalPct    Float?
+  lastTelemetryAt  DateTime?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+  missions         Mission[]
+  audits           CommandAudit[]
+}
+
+model Mission {
+  id         String      @id @default(cuid())
+  droneId    String
+  name       String
+  status     String      @default("queued")
+  geofenceId String?
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  drone      Drone       @relation(fields: [droneId], references: [id], onDelete: Cascade)
+  waypoints  Waypoint[]
+}
+
+model Waypoint {
+  id        String   @id @default(cuid())
+  missionId String
+  seq       Int
+  lat       Float
+  lon       Float
+  alt       Float
+  hoverSec  Int      @default(0)
+  extJson   String?
+  mission   Mission  @relation(fields: [missionId], references: [id], onDelete: Cascade)
+}
+
+model Geofence {
+  id          String   @id @default(cuid())
+  name        String
+  polygonJson String
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+enum SwarmState {
+  IDLE
+  FORMING
+  IN_FORMATION
+  MANEUVERING
+  DISBANDING
+}
+
+model SwarmGroup {
+  id           String      @id @default(cuid())
+  name         String
+  leaderId     String
+  followerIds  String[]
+  formation    String
+  spacing      Float       @default(15)
+  headingDeg   Float       @default(0)
+  altOffset    Float       @default(0)
+  state        SwarmState  @default(IDLE)
+  maneuver     String?
+  maneuverJson String?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  archivedAt   DateTime?
+}
+
+model SwarmPresetConfig {
+  presetId      String   @id
+  formation     String
+  spacing       Float
+  headingDeg    Float
+  altOffset     Float
+  maneuverJson  String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model CommandAudit {
+  id         String   @id @default(cuid())
+  droneId    String
+  userId     String
+  command    String
+  payloadJson String
+  result     String
+  createdAt  DateTime @default(now())
+  drone      Drone    @relation(fields: [droneId], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
