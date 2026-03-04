@@ -112,6 +112,12 @@ export interface MissionRecord {
   name: string;
   status: string;
   geofenceId?: string;
+  executionCount?: number;
+  lastExecutedAt?: string | null;
+  waypointCount?: number;
+  curveWaypointCount?: number;
+  estimatedDistanceMeters?: number;
+  swarmGroupIds?: string[];
   waypoints: MissionWaypoint[];
   createdAt: string;
   updatedAt: string;
@@ -122,6 +128,23 @@ export interface GeofenceRecord {
   name: string;
   polygon: Array<{ lat: number; lon: number }>;
   isActive: boolean;
+}
+
+export interface HomeBaseSlot {
+  droneId: string;
+  lat: number;
+  lon: number;
+}
+
+export interface HomeBaseRecord {
+  id: string;
+  name: string;
+  polygon: Array<{ lat: number; lon: number }>;
+  slots: HomeBaseSlot[];
+  swarmGroupId?: string | null;
+  homeAlt: number;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface TelemetryEvent {

@@ -1,5 +1,6 @@
 import type { DroneTelemetry } from "../types/domain";
 import { useGroundControlStore } from "../store/useGroundControlStore";
+import { MAX_CUSTOM_DRONE_SPEED_MPH, mpsToMph } from "../lib/speedUnits";
 
 interface TelemetryGaugesProps {
   selectedDroneId: string | null;
@@ -121,9 +122,9 @@ export function TelemetryGauges({ selectedDroneId, telemetryByDrone }: Telemetry
         />
         <RadialGauge
           label="Speed"
-          value={telemetry?.velocity.speed ?? 0}
-          max={30}
-          unit="m/s"
+          value={mpsToMph(telemetry?.velocity.speed ?? 0)}
+          max={MAX_CUSTOM_DRONE_SPEED_MPH}
+          unit="mph"
           color="#3de0ff"
           precision={1}
         />

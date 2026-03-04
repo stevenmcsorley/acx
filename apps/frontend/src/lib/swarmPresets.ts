@@ -3,9 +3,11 @@ import type { ScenarioPreset, ScenarioPresetBehavior, ScenarioPresetContext, Swa
 export function inferScenarioPresetBehavior(preset: ScenarioPreset): ScenarioPresetBehavior {
   switch (preset.maneuver) {
     case "orbit":
+    case "fibonacci_orbit":
     case "perimeter":
     case "search_grid":
     case "search_spiral":
+    case "search_expanding_square":
       return "anchored";
     case "escort":
       return "leader_tracking";
@@ -37,7 +39,7 @@ export function presetContextForEventMode(eventMode?: SwarmEventMode): ScenarioP
 }
 
 export function supportsPresetStopRule(preset?: ScenarioPreset): boolean {
-  return !preset?.maneuver || ["orbit", "perimeter", "escort", "corridor", "rotate"].includes(preset.maneuver);
+  return !preset?.maneuver || ["orbit", "fibonacci_orbit", "perimeter", "escort", "corridor", "rotate"].includes(preset.maneuver);
 }
 
 export function defaultDurationForPreset(preset?: ScenarioPreset): number | undefined {
@@ -49,7 +51,7 @@ export function defaultDurationForPreset(preset?: ScenarioPreset): number | unde
     return numericParam(preset.maneuverParams, "durationSec", 18);
   }
 
-  if (["orbit", "perimeter", "escort", "corridor", "rotate"].includes(preset.maneuver)) {
+  if (["orbit", "fibonacci_orbit", "perimeter", "escort", "corridor", "rotate"].includes(preset.maneuver)) {
     return numericParam(preset.maneuverParams, "durationSec", 18);
   }
 

@@ -1,4 +1,4 @@
-import type { DroneFlightState } from "@sgcx/shared-types";
+import type { DroneFlightState, MissionWaypoint } from "@sgcx/shared-types";
 import { BatteryModel } from "./BatteryModel";
 import {
   bearingDeg,
@@ -18,11 +18,12 @@ export interface PhysicsAlert {
 }
 
 export class PhysicsEngine {
-  private readonly maxSpeed = 24;
-  private readonly maxAccel = 6;
-  private readonly maxTurnRateDeg = 80;
-  private readonly maxClimbRate = 5;
-  private readonly maxDescentRate = 4;
+  // Tuned to a fast but still plausible civilian/custom multirotor envelope.
+  private readonly maxSpeed = 22.35;
+  private readonly maxAccel = 7;
+  private readonly maxTurnRateDeg = 95;
+  private readonly maxClimbRate = 7;
+  private readonly maxDescentRate = 6;
   private readonly batteryModel = new BatteryModel();
 
   updateDrone(
@@ -83,7 +84,10 @@ export class PhysicsEngine {
       // Velocity: navigate toward target along bearing (independent of heading)
       const relative = localMetersFromLatLon(drone.lat, drone.lon, target.lat, target.lon);
       const horizontalDistance = vectorMagnitude(relative.north, relative.east);
-      const desiredSpeed = clamp(horizontalDistance * (isManualNav ? 0.55 : 0.35), 0, this.maxSpeed);
+      const speedCap = target.speed && target.speed > 0
+        ? Math.min(target.speed, this.maxSpeed)
+        : this.maxSpeed;
+      const desiredSpeed = clamp(horizontalDistance * (isManualNav ? 0.55 : 0.35), 0, speedCap);
       const bearingRad = (bearing * Math.PI) / 180;
       const desiredNorth = Math.cos(bearingRad) * desiredSpeed;
       const desiredEast = Math.sin(bearingRad) * desiredSpeed;
@@ -166,6 +170,18 @@ export class PhysicsEngine {
       drone.manualControl = undefined;
       drone.manualTarget = undefined;
       drone.mission = undefined;
+      if (drone.pendingMissionCompletion) {
+        this.pushAlert(
+          alerts,
+          drone,
+          nowMs,
+          `mission-success-${drone.pendingMissionCompletion.missionId}`,
+          0,
+          "info",
+          `${drone.id}: mission successful, landed at home`
+        );
+        drone.pendingMissionCompletion = undefined;
+      }
     }
 
     if (drone.flightState === "rtl" && distanceFromHome < 5 && drone.alt < 4) {
@@ -305,7 +321,9 @@ export class PhysicsEngine {
     const altDistance = Math.abs(drone.alt - waypoint.alt);
 
     const horizontalSpeed = vectorMagnitude(drone.vNorth, drone.vEast);
-    const acceptanceRadius = clamp(8 + horizontalSpeed * 1.25, 8, 28);
+    const curveBonus =
+      this.canSmoothTurn(drone.mission.waypoints, drone.mission.index) ? clamp((waypoint.curveSize ?? 0) * 0.4, 0, 36) : 0;
+    const acceptanceRadius = clamp(8 + horizontalSpeed * 1.25 + curveBonus, 8, 60);
     const altitudeWindow = clamp(3 + Math.abs(drone.vUp) * 0.4, 3, 8);
 
     if (!drone.mission.hoverUntilMs && distance <= acceptanceRadius && altDistance <= altitudeWindow) {
@@ -330,18 +348,77 @@ export class PhysicsEngine {
           alerts,
           drone,
           nowMs,
-          `mission-complete-${drone.mission.id}`,
+          `mission-route-complete-${drone.mission.id}`,
           0,
           "info",
-          `${drone.id}: mission complete, returning to launch`
+          `${drone.id}: route complete, returning to launch`
         );
+        drone.pendingMissionCompletion = {
+          missionId: drone.mission.id,
+          missionName: drone.mission.name
+        };
         drone.mission = undefined;
         drone.flightState = "rtl";
-        drone.mode = "mission-complete-rtl";
+        drone.mode = "route-complete-rtl";
       } else {
         drone.mode = `mission-wp-${drone.mission.index + 1}/${drone.mission.waypoints.length}`;
       }
     }
+  }
+
+  private canSmoothTurn(waypoints: MissionWaypoint[], index: number): boolean {
+    const waypoint = waypoints[index];
+    const next = waypoints[index + 1];
+    return Boolean(
+      waypoint &&
+      next &&
+      (waypoint.curveSize ?? 0) > 0 &&
+      waypoint.hover <= 0 &&
+      !waypoint.swarmTrigger &&
+      waypoint.cameraPitch === undefined &&
+      waypoint.heading === undefined &&
+      waypoint.cameraViewMode === undefined
+    );
+  }
+
+  private resolveMissionTarget(
+    drone: SimDroneState,
+    index: number
+  ): { lat: number; lon: number; alt: number; speed?: number } {
+    const mission = drone.mission!;
+    const waypoint = mission.waypoints[index];
+    const next = mission.waypoints[index + 1];
+
+    if (!this.canSmoothTurn(mission.waypoints, index) || !next) {
+      return { lat: waypoint.lat, lon: waypoint.lon, alt: waypoint.alt, speed: waypoint.speed };
+    }
+
+    const distanceToWaypoint = haversineMeters(drone.lat, drone.lon, waypoint.lat, waypoint.lon);
+    const curveMeters = clamp(waypoint.curveSize ?? 0, 0, 220);
+    const lookaheadDistance = Math.min(curveMeters, haversineMeters(waypoint.lat, waypoint.lon, next.lat, next.lon) * 0.35);
+    if (lookaheadDistance < 1 || distanceToWaypoint > curveMeters * 3) {
+      return { lat: waypoint.lat, lon: waypoint.lon, alt: waypoint.alt, speed: waypoint.speed };
+    }
+
+    const outgoing = localMetersFromLatLon(waypoint.lat, waypoint.lon, next.lat, next.lon);
+    const outgoingDistance = vectorMagnitude(outgoing.north, outgoing.east);
+    if (outgoingDistance < 1) {
+      return { lat: waypoint.lat, lon: waypoint.lon, alt: waypoint.alt, speed: waypoint.speed };
+    }
+
+    const progress = clamp(1 - distanceToWaypoint / Math.max(curveMeters * 3, 1), 0, 1);
+    const advanceMeters = lookaheadDistance * progress;
+    const unitNorth = outgoing.north / outgoingDistance;
+    const unitEast = outgoing.east / outgoingDistance;
+    const offset = offsetLatLon(waypoint.lat, waypoint.lon, unitNorth * advanceMeters, unitEast * advanceMeters);
+    const altBlend = outgoingDistance > 0 ? advanceMeters / outgoingDistance : 0;
+
+    return {
+      lat: offset.lat,
+      lon: offset.lon,
+      alt: waypoint.alt + (next.alt - waypoint.alt) * altBlend,
+      speed: next.speed ?? waypoint.speed
+    };
   }
 
   private resolveDesiredHeading(drone: SimDroneState, velocityBearing: number): number {
@@ -380,7 +457,7 @@ export class PhysicsEngine {
     }
   }
 
-  private resolveTarget(drone: SimDroneState): { lat: number; lon: number; alt: number } | null {
+  private resolveTarget(drone: SimDroneState): { lat: number; lon: number; alt: number; speed?: number } | null {
     const state: DroneFlightState = drone.flightState;
 
     if (state === "grounded" || state === "armed") {
@@ -411,8 +488,7 @@ export class PhysicsEngine {
     }
 
     if (drone.mission && drone.mission.index < drone.mission.waypoints.length) {
-      const wp = drone.mission.waypoints[drone.mission.index];
-      return { lat: wp.lat, lon: wp.lon, alt: wp.alt };
+      return this.resolveMissionTarget(drone, drone.mission.index);
     }
 
     return { lat: drone.lat, lon: drone.lon, alt: drone.alt };

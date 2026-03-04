@@ -1,18 +1,21 @@
 import { useState } from "react";
 import clsx from "clsx";
+import { MAX_MANEUVER_SPEED_MPH, mphToMps, mpsToMph } from "../../lib/speedUnits";
 
 export type ManeuverType =
-  | "orbit" | "expand" | "contract" | "rotate"
-  | "search_grid" | "search_spiral" | "escort"
+  | "orbit" | "fibonacci_orbit" | "expand" | "contract" | "rotate"
+  | "search_grid" | "search_spiral" | "search_expanding_square" | "escort"
   | "perimeter" | "corridor";
 
 const MANEUVERS: Array<{ id: ManeuverType; label: string; icon: string; desc: string }> = [
   { id: "orbit", label: "Orbit", icon: "◎", desc: "Circle around a point of interest" },
+  { id: "fibonacci_orbit", label: "Fib Orbit", icon: "✺", desc: "Golden-angle rotating orbit around an anchor" },
   { id: "expand", label: "Expand", icon: "↔", desc: "Increase spacing between drones" },
   { id: "contract", label: "Contract", icon: "→←", desc: "Decrease spacing between drones" },
   { id: "rotate", label: "Rotate", icon: "↻", desc: "Rotate formation heading" },
   { id: "search_grid", label: "Grid Search", icon: "⊞", desc: "Lawnmower sweep pattern" },
   { id: "search_spiral", label: "Spiral", icon: "◌", desc: "Expanding spiral search" },
+  { id: "search_expanding_square", label: "Exp Square", icon: "□", desc: "Expanding square SAR search" },
   { id: "escort", label: "Escort", icon: "▶", desc: "Track a moving target" },
   { id: "perimeter", label: "Perimeter", icon: "⬡", desc: "Patrol perimeter boundary" },
   { id: "corridor", label: "Corridor", icon: "▬", desc: "Guard a corridor path" }
@@ -73,6 +76,8 @@ export function ManeuverControls({
   const [selectedType, setSelectedType] = useState<ManeuverType>("orbit");
   const [orbitRadius, setOrbitRadius] = useState(80);
   const [orbitSpeed, setOrbitSpeed] = useState(6);
+  const [fibonacciRadius, setFibonacciRadius] = useState(110);
+  const [fibonacciSpeed, setFibonacciSpeed] = useState(4);
   const [expandTarget, setExpandTarget] = useState(50);
   const [expandDuration, setExpandDuration] = useState(10);
   const [rotateSpeed, setRotateSpeed] = useState(30);
@@ -85,6 +90,8 @@ export function ManeuverControls({
     switch (selectedType) {
       case "orbit":
         return { radius: orbitRadius, speed: orbitSpeed };
+      case "fibonacci_orbit":
+        return { maxRadius: fibonacciRadius, speed: fibonacciSpeed };
       case "expand":
         return { targetSpacing: expandTarget, duration: expandDuration };
       case "contract":
@@ -95,6 +102,8 @@ export function ManeuverControls({
         return { width: searchWidth, height: searchHeight, speed: 5 };
       case "search_spiral":
         return { maxRadius: searchWidth, speed: 5 };
+      case "search_expanding_square":
+        return { maxRadius: searchWidth, legSpacing: searchHeight, speed: 5 };
       case "escort":
         return {};
       case "perimeter":
@@ -187,7 +196,28 @@ export function ManeuverControls({
         {selectedType === "orbit" && (
           <>
             <SliderControl label="Radius" value={orbitRadius} onChange={setOrbitRadius} min={20} max={300} unit="m" />
-            <SliderControl label="Speed" value={orbitSpeed} onChange={setOrbitSpeed} min={1} max={15} unit="m/s" />
+            <SliderControl
+              label="Speed"
+              value={Math.round(mpsToMph(orbitSpeed))}
+              onChange={(value) => setOrbitSpeed(mphToMps(value))}
+              min={5}
+              max={MAX_MANEUVER_SPEED_MPH}
+              unit="mph"
+            />
+          </>
+        )}
+
+        {selectedType === "fibonacci_orbit" && (
+          <>
+            <SliderControl label="Max Radius" value={fibonacciRadius} onChange={setFibonacciRadius} min={30} max={300} unit="m" />
+            <SliderControl
+              label="Speed"
+              value={Math.round(mpsToMph(fibonacciSpeed))}
+              onChange={(value) => setFibonacciSpeed(mphToMps(value))}
+              min={5}
+              max={MAX_MANEUVER_SPEED_MPH}
+              unit="mph"
+            />
           </>
         )}
 
@@ -202,11 +232,22 @@ export function ManeuverControls({
           <SliderControl label="Speed" value={rotateSpeed} onChange={setRotateSpeed} min={5} max={90} unit="d/s" />
         )}
 
-        {(selectedType === "search_grid" || selectedType === "search_spiral") && (
+        {(selectedType === "search_grid" || selectedType === "search_spiral" || selectedType === "search_expanding_square") && (
           <>
-            <SliderControl label={selectedType === "search_spiral" ? "Max Radius" : "Width"} value={searchWidth} onChange={setSearchWidth} min={50} max={1000} step={10} unit="m" />
+            <SliderControl
+              label={selectedType === "search_grid" ? "Width" : "Max Radius"}
+              value={searchWidth}
+              onChange={setSearchWidth}
+              min={50}
+              max={1000}
+              step={10}
+              unit="m"
+            />
             {selectedType === "search_grid" && (
               <SliderControl label="Height" value={searchHeight} onChange={setSearchHeight} min={50} max={1000} step={10} unit="m" />
+            )}
+            {selectedType === "search_expanding_square" && (
+              <SliderControl label="Leg Step" value={searchHeight} onChange={setSearchHeight} min={20} max={300} step={10} unit="m" />
             )}
           </>
         )}

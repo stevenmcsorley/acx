@@ -64,15 +64,17 @@ model Drone {
 }
 
 model Mission {
-  id         String      @id @default(cuid())
-  droneId    String
-  name       String
-  status     String      @default("queued")
-  geofenceId String?
-  createdAt  DateTime    @default(now())
-  updatedAt  DateTime    @updatedAt
-  drone      Drone       @relation(fields: [droneId], references: [id], onDelete: Cascade)
-  waypoints  Waypoint[]
+  id             String      @id @default(cuid())
+  droneId        String
+  name           String
+  status         String      @default("queued")
+  geofenceId     String?
+  executionCount Int         @default(0)
+  lastExecutedAt DateTime?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  drone          Drone       @relation(fields: [droneId], references: [id], onDelete: Cascade)
+  waypoints      Waypoint[]
 }
 
 model Waypoint {
@@ -94,6 +96,17 @@ model Geofence {
   isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+
+model HomeBase {
+  id           String   @id @default(cuid())
+  name         String
+  polygonJson  String
+  slotsJson    String?
+  swarmGroupId String?
+  homeAlt      Float    @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 }
 
 enum SwarmState {

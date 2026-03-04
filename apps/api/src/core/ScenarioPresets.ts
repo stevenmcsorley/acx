@@ -32,9 +32,11 @@ export interface ScenarioPresetConfigRecord {
 function inferScenarioPresetBehavior(preset: ScenarioPreset): ScenarioPresetBehavior {
   switch (preset.maneuver) {
     case "orbit":
+    case "fibonacci_orbit":
     case "perimeter":
     case "search_grid":
     case "search_spiral":
+    case "search_expanding_square":
       return "anchored";
     case "escort":
       return "leader_tracking";
@@ -142,14 +144,14 @@ const RAW_DEFAULT_SCENARIO_PRESETS: ScenarioPreset[] = [
   {
     id: "sar-expanding",
     name: "Expanding Square",
-    description: "Expand formation for wider area coverage",
+    description: "Classic SAR expanding-square search from the trigger point",
     category: "sar",
     formation: "grid",
     spacing: 15,
     headingDeg: 0,
     altOffset: 0,
-    maneuver: "expand",
-    maneuverParams: { targetSpacing: 50, duration: 15 }
+    maneuver: "search_expanding_square",
+    maneuverParams: { legSpacing: 90, maxRadius: 420, speed: 5 }
   },
 
   // ── Film ──
@@ -336,6 +338,18 @@ const RAW_DEFAULT_SCENARIO_PRESETS: ScenarioPreset[] = [
     spacing: 15,
     headingDeg: 0,
     altOffset: 0
+  },
+  {
+    id: "geo-fibonacci-orbit",
+    name: "Fibonacci Orbit",
+    description: "Golden-angle rotating disc around the anchor point",
+    category: "geometric",
+    formation: "fibonacci_spiral",
+    spacing: 15,
+    headingDeg: 0,
+    altOffset: 0,
+    maneuver: "fibonacci_orbit",
+    maneuverParams: { maxRadius: 110, speed: 4, direction: "cw", durationSec: 22 }
   },
   {
     id: "geo-sphere",

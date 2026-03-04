@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import clsx from "clsx";
 import type { DroneRecord, DroneTelemetry, ScenarioPreset } from "../types/domain";
 import type { SwarmGroup, SwarmState } from "../store/useGroundControlStore";
+import { MAX_MANEUVER_SPEED_MPH, mphToMps, mpsToMph } from "../lib/speedUnits";
 import { FormationPicker, type FormationName } from "./swarm/FormationPicker";
 import { ManeuverControls, type ManeuverType } from "./swarm/ManeuverControls";
 
@@ -838,15 +839,55 @@ export function SwarmManagerPanel({
                                   />
                                   <SliderControl
                                     label="Speed"
-                                    value={numericParam(draft.maneuverParams, "speed", 6)}
-                                    onChange={(value) => updatePresetDraftManeuver("speed", value)}
-                                    min={1}
-                                    max={15}
-                                    unit="m/s"
+                                    value={Math.round(mpsToMph(numericParam(draft.maneuverParams, "speed", 6)))}
+                                    onChange={(value) => updatePresetDraftManeuver("speed", mphToMps(value))}
+                                    min={5}
+                                    max={MAX_MANEUVER_SPEED_MPH}
+                                    unit="mph"
                                   />
                                   <SliderControl
                                     label="Duration"
                                     value={numericParam(draft.maneuverParams, "durationSec", 18)}
+                                    onChange={(value) => updatePresetDraftManeuver("durationSec", value)}
+                                    min={5}
+                                    max={120}
+                                    unit="s"
+                                  />
+                                  <div className="flex items-center justify-between gap-3">
+                                    <span className="shrink-0 text-[11px] text-cyan-100/60">Direction</span>
+                                    <select
+                                      className="input max-w-[150px] text-[11px]"
+                                      value={stringParam(draft.maneuverParams, "direction", "cw")}
+                                      onChange={(event) => updatePresetDraftManeuver("direction", event.target.value)}
+                                    >
+                                      <option value="cw">Clockwise</option>
+                                      <option value="ccw">Counter-Clockwise</option>
+                                    </select>
+                                  </div>
+                                </>
+                              )}
+
+                              {draft.maneuver === "fibonacci_orbit" && (
+                                <>
+                                  <SliderControl
+                                    label="Max Radius"
+                                    value={numericParam(draft.maneuverParams, "maxRadius", 110)}
+                                    onChange={(value) => updatePresetDraftManeuver("maxRadius", value)}
+                                    min={30}
+                                    max={300}
+                                    unit="m"
+                                  />
+                                  <SliderControl
+                                    label="Speed"
+                                    value={Math.round(mpsToMph(numericParam(draft.maneuverParams, "speed", 4)))}
+                                    onChange={(value) => updatePresetDraftManeuver("speed", mphToMps(value))}
+                                    min={5}
+                                    max={MAX_MANEUVER_SPEED_MPH}
+                                    unit="mph"
+                                  />
+                                  <SliderControl
+                                    label="Duration"
+                                    value={numericParam(draft.maneuverParams, "durationSec", 22)}
                                     onChange={(value) => updatePresetDraftManeuver("durationSec", value)}
                                     min={5}
                                     max={120}
@@ -878,11 +919,11 @@ export function SwarmManagerPanel({
                                   />
                                   <SliderControl
                                     label="Speed"
-                                    value={numericParam(draft.maneuverParams, "speed", 4)}
-                                    onChange={(value) => updatePresetDraftManeuver("speed", value)}
-                                    min={1}
-                                    max={12}
-                                    unit="m/s"
+                                    value={Math.round(mpsToMph(numericParam(draft.maneuverParams, "speed", 4)))}
+                                    onChange={(value) => updatePresetDraftManeuver("speed", mphToMps(value))}
+                                    min={5}
+                                    max={MAX_MANEUVER_SPEED_MPH}
+                                    unit="mph"
                                   />
                                   <SliderControl
                                     label="Duration"
@@ -917,11 +958,11 @@ export function SwarmManagerPanel({
                                   />
                                   <SliderControl
                                     label="Speed"
-                                    value={numericParam(draft.maneuverParams, "speed", 5)}
-                                    onChange={(value) => updatePresetDraftManeuver("speed", value)}
-                                    min={1}
-                                    max={12}
-                                    unit="m/s"
+                                    value={Math.round(mpsToMph(numericParam(draft.maneuverParams, "speed", 5)))}
+                                    onChange={(value) => updatePresetDraftManeuver("speed", mphToMps(value))}
+                                    min={5}
+                                    max={MAX_MANEUVER_SPEED_MPH}
+                                    unit="mph"
                                   />
                                 </>
                               )}
@@ -939,11 +980,42 @@ export function SwarmManagerPanel({
                                   />
                                   <SliderControl
                                     label="Speed"
-                                    value={numericParam(draft.maneuverParams, "speed", 5)}
-                                    onChange={(value) => updatePresetDraftManeuver("speed", value)}
-                                    min={1}
-                                    max={12}
-                                    unit="m/s"
+                                    value={Math.round(mpsToMph(numericParam(draft.maneuverParams, "speed", 5)))}
+                                    onChange={(value) => updatePresetDraftManeuver("speed", mphToMps(value))}
+                                    min={5}
+                                    max={MAX_MANEUVER_SPEED_MPH}
+                                    unit="mph"
+                                  />
+                                </>
+                              )}
+
+                              {draft.maneuver === "search_expanding_square" && (
+                                <>
+                                  <SliderControl
+                                    label="Max Radius"
+                                    value={numericParam(draft.maneuverParams, "maxRadius", 420)}
+                                    onChange={(value) => updatePresetDraftManeuver("maxRadius", value)}
+                                    min={50}
+                                    max={1000}
+                                    step={10}
+                                    unit="m"
+                                  />
+                                  <SliderControl
+                                    label="Leg Step"
+                                    value={numericParam(draft.maneuverParams, "legSpacing", 90)}
+                                    onChange={(value) => updatePresetDraftManeuver("legSpacing", value)}
+                                    min={20}
+                                    max={300}
+                                    step={10}
+                                    unit="m"
+                                  />
+                                  <SliderControl
+                                    label="Speed"
+                                    value={Math.round(mpsToMph(numericParam(draft.maneuverParams, "speed", 5)))}
+                                    onChange={(value) => updatePresetDraftManeuver("speed", mphToMps(value))}
+                                    min={5}
+                                    max={MAX_MANEUVER_SPEED_MPH}
+                                    unit="mph"
                                   />
                                 </>
                               )}

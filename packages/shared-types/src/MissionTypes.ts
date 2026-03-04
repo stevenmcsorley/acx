@@ -20,6 +20,7 @@ export interface SwarmTrigger {
 
 export interface MissionWaypoint {
   id: string;
+  name?: string;
   lat: number;
   lon: number;
   alt: number;
@@ -28,14 +29,22 @@ export interface MissionWaypoint {
   // Orientation & camera
   heading?: number;
   headingMode?: HeadingMode;
+  curveSize?: number;
+  rotationDir?: number;
+  gimbalMode?: number;
   cameraPitch?: number;
+  altitudeMode?: number;
+  speed?: number;
+  poiLat?: number;
+  poiLon?: number;
+  poiAlt?: number;
+  poiAltitudeMode?: number;
+  photoTimeInterval?: number;
+  photoDistInterval?: number;
   fpvYaw?: number;
   fpvPitch?: number;
   fpvZoom?: number;
   cameraViewMode?: string;
-  poiLat?: number;
-  poiLon?: number;
-  poiAlt?: number;
 }
 
 export interface MissionPlan {

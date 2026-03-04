@@ -44,6 +44,10 @@ export interface SimDroneState {
   };
   manualTarget?: { lat: number; lon: number; alt: number };
   mission?: SimMission;
+  pendingMissionCompletion?: {
+    missionId: string;
+    missionName: string;
+  };
   lastAlertAt: Record<string, number>;
 
   // Orientation control (decoupled from velocity)

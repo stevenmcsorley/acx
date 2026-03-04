@@ -2,6 +2,8 @@ import type {
   AlertEvent,
   DroneRecord,
   GeofenceRecord,
+  HomeBaseSlot,
+  HomeBaseRecord,
   MissionRecord,
   MissionWaypoint,
   UserInfo
@@ -158,6 +160,24 @@ export class ApiClient {
     return parseResponse(response);
   }
 
+  async updateMission(
+    missionId: string,
+    input: {
+      droneId: string;
+      name?: string;
+      geofenceId?: string;
+      waypoints: MissionWaypoint[];
+    }
+  ): Promise<{ mission: MissionRecord }> {
+    const response = await fetch(`${this.baseUrl}/api/missions/${missionId}`, {
+      method: "PUT",
+      headers: buildHeaders(this.token, true),
+      body: JSON.stringify(input)
+    });
+
+    return parseResponse(response);
+  }
+
   async executeMission(missionId: string): Promise<{ accepted: boolean; mission: MissionRecord }> {
     const response = await fetch(`${this.baseUrl}/api/missions/${missionId}/execute`, {
       method: "POST",
@@ -176,9 +196,114 @@ export class ApiClient {
     return parseResponse(response);
   }
 
+  async deleteMission(missionId: string): Promise<{ deleted: boolean; missionId: string }> {
+    const response = await fetch(`${this.baseUrl}/api/missions/${missionId}`, {
+      method: "DELETE",
+      headers: buildHeaders(this.token)
+    });
+
+    return parseResponse(response);
+  }
+
   async fetchGeofences(): Promise<{ geofences: GeofenceRecord[] }> {
     const response = await fetch(`${this.baseUrl}/api/geofences`, {
       headers: buildHeaders(this.token)
+    });
+    return parseResponse(response);
+  }
+
+  async createGeofence(input: {
+    name: string;
+    polygon: Array<{ lat: number; lon: number }>;
+    isActive?: boolean;
+  }): Promise<{ geofence: GeofenceRecord }> {
+    const response = await fetch(`${this.baseUrl}/api/geofences`, {
+      method: "POST",
+      headers: buildHeaders(this.token, true),
+      body: JSON.stringify(input)
+    });
+    return parseResponse(response);
+  }
+
+  async updateGeofence(
+    geofenceId: string,
+    input: Partial<{ name: string; polygon: Array<{ lat: number; lon: number }>; isActive: boolean }>
+  ): Promise<{ geofence: GeofenceRecord }> {
+    const response = await fetch(`${this.baseUrl}/api/geofences/${geofenceId}`, {
+      method: "PATCH",
+      headers: buildHeaders(this.token, true),
+      body: JSON.stringify(input)
+    });
+    return parseResponse(response);
+  }
+
+  async deleteGeofence(geofenceId: string): Promise<void> {
+    const response = await fetch(`${this.baseUrl}/api/geofences/${geofenceId}`, {
+      method: "DELETE",
+      headers: buildHeaders(this.token)
+    });
+    if (!response.ok && response.status !== 204) {
+      await parseResponse(response);
+    }
+  }
+
+  async fetchHomeBases(): Promise<{ homeBases: HomeBaseRecord[] }> {
+    const response = await fetch(`${this.baseUrl}/api/home-bases`, {
+      headers: buildHeaders(this.token)
+    });
+    return parseResponse(response);
+  }
+
+  async createHomeBase(input: {
+    name: string;
+    polygon: Array<{ lat: number; lon: number }>;
+    swarmGroupId?: string;
+    homeAlt?: number;
+  }): Promise<{ homeBase: HomeBaseRecord; assignedDroneIds: string[] }> {
+    const response = await fetch(`${this.baseUrl}/api/home-bases`, {
+      method: "POST",
+      headers: buildHeaders(this.token, true),
+      body: JSON.stringify(input)
+    });
+    return parseResponse(response);
+  }
+
+  async updateHomeBase(
+    homeBaseId: string,
+    input: Partial<{
+      name: string;
+      polygon: Array<{ lat: number; lon: number }>;
+      swarmGroupId: string | null;
+      homeAlt: number;
+      slots: HomeBaseSlot[] | null;
+    }>
+  ): Promise<{ homeBase: HomeBaseRecord; assignedDroneIds: string[] }> {
+    const response = await fetch(`${this.baseUrl}/api/home-bases/${homeBaseId}`, {
+      method: "PATCH",
+      headers: buildHeaders(this.token, true),
+      body: JSON.stringify(input)
+    });
+    return parseResponse(response);
+  }
+
+  async deleteHomeBase(homeBaseId: string): Promise<void> {
+    const response = await fetch(`${this.baseUrl}/api/home-bases/${homeBaseId}`, {
+      method: "DELETE",
+      headers: buildHeaders(this.token)
+    });
+    if (!response.ok && response.status !== 204) {
+      await parseResponse(response);
+    }
+  }
+
+  async assignDroneToHomeBase(
+    homeBaseId: string,
+    droneId: string
+  ): Promise<{ homeBase: HomeBaseRecord; slot?: HomeBaseSlot }> {
+    const response = await fetch(`${this.baseUrl}/api/home-bases/${homeBaseId}/assign-drone`, {
+      method: "POST",
+      headers: buildHeaders(this.token, true),
+      body: JSON.stringify({ droneId })
     });
     return parseResponse(response);
   }
@@ -225,7 +350,10 @@ export class ApiClient {
     return parseResponse(response);
   }
 
-  async engageSwarmGroup(groupId: string, leaderPosition?: { lat: number; lon: number; alt: number }): Promise<{ engaged: boolean; targets: unknown[] }> {
+  async engageSwarmGroup(
+    groupId: string,
+    leaderPosition?: { lat: number; lon: number; alt: number }
+  ): Promise<{ engaged: boolean; targets: unknown[]; launchedDroneIds?: string[]; takeoffAltitude?: number }> {
     const response = await fetch(`${this.baseUrl}/api/swarm/groups/${groupId}/engage`, {
       method: "POST",
       headers: buildHeaders(this.token, true),

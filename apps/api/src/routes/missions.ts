@@ -1,11 +1,12 @@
 import type { FastifyInstance } from "fastify";
+import type { MissionWaypoint } from "@sgcx/shared-types";
 import { UserRole } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../db/prisma";
 import { requireAuth, requireRoles } from "../auth/rbac";
 import type { TelemetryBus } from "../core/TelemetryBus";
 import { RedisChannels } from "../core/TelemetryBus";
-import { PhysicsEngine } from "../simulation/PhysicsEngine";
+import { MissionPlanner } from "../core/MissionPlanner";
 
 const waypointSchema = z.object({
   id: z.string().optional(),
@@ -75,12 +76,82 @@ function mergeExtFields(wp: { id: string; lat: number; lon: number; alt: number;
   return base;
 }
 
+function storedWaypointToMissionWaypoint(wp: {
+  id: string;
+  lat: number;
+  lon: number;
+  alt: number;
+  hoverSec: number;
+  extJson?: string | null;
+}): MissionWaypoint {
+  const merged = mergeExtFields(wp) as Record<string, unknown>;
+  return {
+    ...(merged as Omit<MissionWaypoint, "id" | "lat" | "lon" | "alt" | "hover">),
+    id: String(merged.id),
+    lat: Number(merged.lat),
+    lon: Number(merged.lon),
+    alt: Number(merged.alt),
+    hover: Number(merged.hover)
+  };
+}
+
 const missionSchema = z.object({
   droneId: z.string().min(2),
   name: z.string().min(2).max(120).optional(),
   geofenceId: z.string().optional(),
   waypoints: z.array(waypointSchema).min(1).max(500)
 });
+
+const missionPlanner = new MissionPlanner();
+
+type StoredMissionWithWaypoints = {
+  id: string;
+  droneId: string;
+  name: string;
+  geofenceId: string | null;
+  status: string;
+  executionCount: number;
+  lastExecutedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+  waypoints: Array<{
+    id: string;
+    lat: number;
+    lon: number;
+    alt: number;
+    hoverSec: number;
+    extJson?: string | null;
+  }>;
+};
+
+function serializeMission(mission: StoredMissionWithWaypoints) {
+  const waypoints = mission.waypoints.map((wp) => storedWaypointToMissionWaypoint(wp));
+  const swarmGroupIds = [...new Set(
+    waypoints
+      .map((wp) => {
+        const trigger = wp.swarmTrigger as { groupId?: string } | undefined;
+        return trigger?.groupId;
+      })
+      .filter((groupId): groupId is string => Boolean(groupId))
+  )];
+
+  return {
+    id: mission.id,
+    droneId: mission.droneId,
+    name: mission.name,
+    geofenceId: mission.geofenceId,
+    status: mission.status,
+    executionCount: mission.executionCount,
+    lastExecutedAt: mission.lastExecutedAt,
+    createdAt: mission.createdAt,
+    updatedAt: mission.updatedAt,
+    waypointCount: waypoints.length,
+    curveWaypointCount: waypoints.filter((wp) => typeof wp.curveSize === "number" && wp.curveSize > 0).length,
+    estimatedDistanceMeters: missionPlanner.estimateDistanceMeters(waypoints),
+    swarmGroupIds,
+    waypoints
+  };
+}
 
 export async function missionRoutes(server: FastifyInstance, bus: TelemetryBus): Promise<void> {
   server.post(
@@ -137,17 +208,105 @@ export async function missionRoutes(server: FastifyInstance, bus: TelemetryBus):
           }
         });
 
-        return created;
+        return tx.mission.findUniqueOrThrow({
+          where: { id: created.id },
+          include: {
+            waypoints: {
+              orderBy: { seq: "asc" }
+            }
+          }
+        });
       });
 
       reply.status(201).send({
-        mission: {
-          id: mission.id,
-          droneId: mission.droneId,
-          name: mission.name,
-          status: mission.status
+        mission: serializeMission(mission)
+      });
+    }
+  );
+
+  server.put(
+    "/api/missions/:id",
+    { preHandler: [requireAuth, requireRoles(UserRole.ADMIN, UserRole.OPERATOR)] },
+    async (request, reply) => {
+      const missionId = z.string().min(1).parse((request.params as { id: string }).id);
+      const parsed = missionSchema.safeParse(request.body);
+      if (!parsed.success) {
+        reply.status(400).send({ message: "Invalid mission payload", errors: parsed.error.flatten() });
+        return;
+      }
+
+      const existing = await prisma.mission.findUnique({
+        where: { id: missionId },
+        include: {
+          waypoints: {
+            orderBy: { seq: "asc" }
+          }
         }
       });
+      if (!existing) {
+        reply.status(404).send({ message: `Mission ${missionId} not found` });
+        return;
+      }
+      if (existing.status === "executing") {
+        reply.status(409).send({ message: "Cannot edit a mission while it is executing" });
+        return;
+      }
+
+      const input = parsed.data;
+      const drone = await prisma.drone.findUnique({ where: { id: input.droneId } });
+      if (!drone) {
+        reply.status(404).send({ message: `Drone ${input.droneId} not found` });
+        return;
+      }
+
+      const updatedMission = await prisma.$transaction(async (tx) => {
+        await tx.waypoint.deleteMany({ where: { missionId } });
+
+        const updated = await tx.mission.update({
+          where: { id: missionId },
+          data: {
+            droneId: input.droneId,
+            name: input.name ?? existing.name,
+            geofenceId: input.geofenceId
+          }
+        });
+
+        await tx.waypoint.createMany({
+          data: input.waypoints.map((wp, idx) => ({
+            missionId,
+            seq: idx,
+            lat: wp.lat,
+            lon: wp.lon,
+            alt: wp.alt,
+            hoverSec: wp.hover,
+            extJson: extractExtFields(wp)
+          }))
+        });
+
+        await tx.commandAudit.create({
+          data: {
+            droneId: input.droneId,
+            userId: request.authUser!.id,
+            command: "updateMission",
+            payloadJson: JSON.stringify({
+              missionId,
+              waypointCount: input.waypoints.length
+            }),
+            result: "accepted"
+          }
+        });
+
+        return tx.mission.findUniqueOrThrow({
+          where: { id: updated.id },
+          include: {
+            waypoints: {
+              orderBy: { seq: "asc" }
+            }
+          }
+        });
+      });
+
+      reply.send({ mission: serializeMission(updatedMission) });
     }
   );
 
@@ -176,14 +335,15 @@ export async function missionRoutes(server: FastifyInstance, bus: TelemetryBus):
         return;
       }
 
+      const rawWaypoints = mission.waypoints.map((wp) => storedWaypointToMissionWaypoint(wp));
       await bus.publish(RedisChannels.missions, {
         missionId: mission.id,
         droneId: mission.droneId,
         name: mission.name,
-        waypoints: mission.waypoints.map((wp) => mergeExtFields(wp))
+        waypoints: rawWaypoints
       });
 
-      await prisma.$transaction(async (tx) => {
+      const updatedMission = await prisma.$transaction(async (tx) => {
         await tx.mission.updateMany({
           where: { droneId: mission.droneId, id: { not: mission.id }, status: "executing" },
           data: { status: "uploaded" }
@@ -191,7 +351,11 @@ export async function missionRoutes(server: FastifyInstance, bus: TelemetryBus):
 
         await tx.mission.update({
           where: { id: mission.id },
-          data: { status: "executing" }
+          data: {
+            status: "executing",
+            executionCount: { increment: 1 },
+            lastExecutedAt: new Date()
+          }
         });
 
         await tx.commandAudit.create({
@@ -206,16 +370,20 @@ export async function missionRoutes(server: FastifyInstance, bus: TelemetryBus):
             result: "accepted"
           }
         });
+
+        return tx.mission.findUniqueOrThrow({
+          where: { id: mission.id },
+          include: {
+            waypoints: {
+              orderBy: { seq: "asc" }
+            }
+          }
+        });
       });
 
       reply.send({
         accepted: true,
-        mission: {
-          id: mission.id,
-          droneId: mission.droneId,
-          name: mission.name,
-          status: "executing"
-        }
+        mission: serializeMission(updatedMission)
       });
     }
   );
@@ -234,20 +402,43 @@ export async function missionRoutes(server: FastifyInstance, bus: TelemetryBus):
     });
 
     return {
-      missions: missions.map((mission) => ({
-        id: mission.id,
-        droneId: mission.droneId,
-        name: mission.name,
-        geofenceId: mission.geofenceId,
-        status: mission.status,
-        createdAt: mission.createdAt,
-        updatedAt: mission.updatedAt,
-        waypoints: mission.waypoints.map((wp) => mergeExtFields(wp))
-      }))
+      missions: missions.map((mission) => serializeMission(mission))
     };
   });
 
-  // Smoothed path preview - returns Catmull-Rom interpolated path for a mission
+  server.delete(
+    "/api/missions/:id",
+    { preHandler: [requireAuth, requireRoles(UserRole.ADMIN, UserRole.OPERATOR)] },
+    async (request, reply) => {
+      const missionId = z.string().min(1).parse((request.params as { id: string }).id);
+      const mission = await prisma.mission.findUnique({ where: { id: missionId } });
+      if (!mission) {
+        reply.status(404).send({ message: `Mission ${missionId} not found` });
+        return;
+      }
+      if (mission.status === "executing") {
+        reply.status(409).send({ message: "Cannot delete a mission while it is executing" });
+        return;
+      }
+
+      await prisma.$transaction(async (tx) => {
+        await tx.commandAudit.create({
+          data: {
+            droneId: mission.droneId,
+            userId: request.authUser!.id,
+            command: "deleteMission",
+            payloadJson: JSON.stringify({ missionId }),
+            result: "accepted"
+          }
+        });
+        await tx.mission.delete({ where: { id: missionId } });
+      });
+
+      reply.send({ deleted: true, missionId });
+    }
+  );
+
+  // Smoothed path preview - returns rounded-corner path honoring waypoint curveSize.
   server.post(
     "/api/missions/:id/smoothed-path",
     { preHandler: [requireAuth] },
@@ -267,13 +458,8 @@ export async function missionRoutes(server: FastifyInstance, bus: TelemetryBus):
         return;
       }
 
-      const rawWaypoints = mission.waypoints.map((wp) => ({
-        lat: wp.lat,
-        lon: wp.lon,
-        alt: wp.alt
-      }));
-
-      const smoothed = PhysicsEngine.computeSmoothedPath(rawWaypoints, pointsPerSegment);
+      const rawWaypoints = mission.waypoints.map((wp) => storedWaypointToMissionWaypoint(wp));
+      const smoothed = missionPlanner.buildPreviewPath(rawWaypoints, pointsPerSegment);
 
       reply.send({ smoothedPath: smoothed });
     }

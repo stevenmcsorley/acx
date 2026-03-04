@@ -1,5 +1,7 @@
 import { useMemo } from "react";
 import type { DroneRecord, DroneTelemetry, MissionRecord } from "../types/domain";
+import { getPreferredMissionForDrone } from "../lib/missionSelection";
+import { formatSpeedMph, mpsToMph } from "../lib/speedUnits";
 
 interface MissionOutcome {
   type: "success" | "aborted";
@@ -87,6 +89,8 @@ function humanizeDroneMode(mode: string): string {
       return "RTL Geofence";
     case "rtl-landing":
       return "RTL Landing";
+    case "route-complete-rtl":
+      return "Route Complete RTL";
     case "manual-stick":
       return "Manual Flight";
     case "manual-nav":
@@ -110,10 +114,7 @@ export function WaypointOpsPanel({
   const selectedTelemetry = selectedDroneId ? telemetryByDrone[selectedDroneId] : undefined;
 
   const latestMissionForSelectedDrone = useMemo(() => {
-    if (!selectedDroneId) return undefined;
-    return missions
-      .filter((mission) => mission.droneId === selectedDroneId && mission.waypoints.length > 0)
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
+    return getPreferredMissionForDrone(missions, selectedDroneId);
   }, [missions, selectedDroneId]);
 
   const missionProgress = useMemo(() => {
@@ -247,9 +248,9 @@ export function WaypointOpsPanel({
         <div className="rounded border border-cyan-300/15 bg-bg-900/65 px-2 py-1 text-center">
           <div className="text-[8px] uppercase tracking-[0.12em] text-cyan-100/45">Speed</div>
           <div className="text-[15px] font-semibold text-cyan-100/90">
-            {selectedTelemetry ? `${Math.round(selectedTelemetry.velocity.speed)}` : "--"}
+            {selectedTelemetry ? `${Math.round(mpsToMph(selectedTelemetry.velocity.speed))}` : "--"}
           </div>
-          <div className="text-[8px] uppercase tracking-[0.08em] text-cyan-100/35">m/s</div>
+          <div className="text-[8px] uppercase tracking-[0.08em] text-cyan-100/35">mph</div>
         </div>
       </div>
 
@@ -274,7 +275,7 @@ export function WaypointOpsPanel({
                     </div>
                     <div className="mt-0.5 grid grid-cols-3 gap-1 text-[9px] text-cyan-100/55">
                       <span>{Math.round(row.batteryPct)}%</span>
-                      <span>{Math.round(row.speed)} m/s</span>
+                      <span>{formatSpeedMph(row.speed, 0)}</span>
                       <span className="truncate">{humanizeDroneMode(row.mode)}</span>
                     </div>
                     <div className="mt-0.5 font-mono text-[9px] text-cyan-100/45">

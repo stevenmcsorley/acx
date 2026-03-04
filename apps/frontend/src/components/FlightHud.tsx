@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import type { SwarmGroup } from "../store/useGroundControlStore";
 import type { DroneRecord, DroneTelemetry, MissionRecord } from "../types/domain";
 import { useGroundControlStore } from "../store/useGroundControlStore";
+import { formatSpeedMph } from "../lib/speedUnits";
 
 interface FlightHudProps {
   drones: DroneRecord[];
@@ -72,6 +73,8 @@ function humanizeDroneMode(mode: string): string {
       return "RTL Geofence";
     case "rtl-landing":
       return "RTL Landing";
+    case "route-complete-rtl":
+      return "Route Complete RTL";
     case "manual-stick":
       return "Manual Flight";
     case "manual-nav":
@@ -115,9 +118,9 @@ function HudMetric({
   accent?: string;
 }): JSX.Element {
   return (
-    <div className="rounded border border-cyan-300/18 bg-bg-950/78 px-3 py-2 shadow-[0_0_16px_rgba(0,0,0,0.28)] backdrop-blur-[2px]">
+    <div className="min-h-[72px] rounded border border-cyan-300/18 bg-bg-950/78 px-3.5 py-2.5 shadow-[0_0_16px_rgba(0,0,0,0.28)] backdrop-blur-[2px]">
       <div className="text-[8px] uppercase tracking-[0.18em] text-cyan-100/45">{label}</div>
-      <div className={`mt-1 font-display text-[18px] leading-none ${accent}`}>{value}</div>
+      <div className={`mt-1 whitespace-nowrap font-display text-[16px] leading-none ${accent}`}>{value}</div>
     </div>
   );
 }
@@ -244,7 +247,7 @@ export function FlightHud({
         <Pill label={`Live ${formatTelemetryStamp(telemetry.timestamp)}`} accent="text-accent-green" />
       </div>
 
-      <div className="absolute right-14 top-4 grid w-[216px] grid-cols-2 gap-2">
+      <div className="absolute right-14 top-4 grid w-[252px] grid-cols-2 gap-2.5">
         <HudMetric
           label="Battery"
           value={`${Math.round(telemetry.batteryPct)}%`}
@@ -260,9 +263,9 @@ export function FlightHud({
           value={`${(visualAltitude ?? telemetry.position.alt).toFixed(1)}m`}
           accent="text-accent-amber"
         />
-        <HudMetric label="Speed" value={`${telemetry.velocity.speed.toFixed(1)}m/s`} />
+        <HudMetric label="Speed" value={formatSpeedMph(telemetry.velocity.speed, 1)} />
         <HudMetric label="Heading" value={`${Math.round(telemetry.heading)}°`} accent="text-accent-cyan" />
-        <HudMetric label="Wind" value={`${telemetry.wind.speed.toFixed(1)}m/s`} accent="text-cyan-100/85" />
+        <HudMetric label="Wind" value={formatSpeedMph(telemetry.wind.speed, 1)} accent="text-cyan-100/85" />
       </div>
 
       <div className="absolute bottom-11 left-4 right-16">

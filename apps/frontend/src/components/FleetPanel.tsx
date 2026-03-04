@@ -1,16 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 import clsx from "clsx";
 import type { SwarmGroup } from "../store/useGroundControlStore";
-import type { DroneRecord, DroneTelemetry } from "../types/domain";
+import type { DroneRecord, DroneTelemetry, HomeBaseRecord } from "../types/domain";
+import { formatSpeedMph } from "../lib/speedUnits";
 
 interface FleetPanelProps {
   drones: DroneRecord[];
+  homeBases: HomeBaseRecord[];
   telemetryByDrone: Record<string, DroneTelemetry>;
   selectedDroneId: string | null;
   swarmGroups: SwarmGroup[];
   embedded?: boolean;
   onSelectDrone: (droneId: string) => void;
-  onRegisterDrone: (input: { id: string; name?: string; homeLat: number; homeLon: number; homeAlt?: number }) => void;
+  onRegisterDrone: (input: { id: string; name?: string; homeLat: number; homeLon: number; homeAlt?: number; homeBaseId?: string }) => void;
   onUpdateDroneHome: (droneId: string, input: { homeLat: number; homeLon: number; homeAlt?: number }) => void;
   onArchiveDrone: (droneId: string, archived: boolean) => void;
   onDeleteDrone: (droneId: string) => void;
@@ -48,6 +50,7 @@ function stateLabel(flightState?: string): string {
 
 export function FleetPanel({
   drones,
+  homeBases,
   telemetryByDrone,
   selectedDroneId,
   swarmGroups,
@@ -63,6 +66,7 @@ export function FleetPanel({
   const [newLat, setNewLat] = useState("37.7749");
   const [newLon, setNewLon] = useState("-122.4194");
   const [newAlt, setNewAlt] = useState("0");
+  const [newHomeBaseId, setNewHomeBaseId] = useState("");
   const [showRegister, setShowRegister] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
 
@@ -76,6 +80,10 @@ export function FleetPanel({
   }, [drones, search, showArchived]);
 
   const liveDrones = useMemo(() => drones.filter((drone) => !drone.archivedAt), [drones]);
+  const availableRegistrationBases = useMemo(
+    () => homeBases.filter((base) => !base.swarmGroupId),
+    [homeBases]
+  );
   const archivedCount = drones.length - liveDrones.length;
 
   const activeCount = liveDrones.filter((d) => {
@@ -96,6 +104,11 @@ export function FleetPanel({
     setNewLon(String(selectedDrone.home.lon));
     setNewAlt(String(selectedDrone.home.alt));
   }, [selectedDroneId, drones]);
+
+  const selectedRegistrationBase = useMemo(
+    () => availableRegistrationBases.find((base) => base.id === newHomeBaseId) ?? null,
+    [availableRegistrationBases, newHomeBaseId]
+  );
 
   return (
     <aside className={embedded ? "flex h-full min-h-0 flex-col overflow-hidden" : "panel flex h-full min-h-0 flex-col overflow-hidden"}>
@@ -194,7 +207,7 @@ export function FleetPanel({
                   <div className="mt-0.5 grid grid-cols-3 text-[10px] text-cyan-50/60">
                     <span>{drone.archivedAt ? "--" : `${Math.round(telemetry?.batteryPct ?? drone.lastKnown?.batteryPct ?? 100)}%`}</span>
                     <span>{drone.archivedAt ? "--" : `${Math.round(telemetry?.position.alt ?? drone.lastKnown?.alt ?? 0)}m`}</span>
-                    <span>{drone.archivedAt ? "--" : `${Math.round(telemetry?.velocity.speed ?? 0)}m/s`}</span>
+                    <span>{drone.archivedAt ? "--" : formatSpeedMph(telemetry?.velocity.speed ?? 0, 0)}</span>
                   </div>
                   {swarmGroup ? (
                     <div className="mt-0.5 flex items-center gap-1 text-[9px] text-cyan-100/48">
@@ -260,22 +273,71 @@ export function FleetPanel({
             onSubmit={(event) => {
               event.preventDefault();
               const id = newId.trim();
-              const homeLat = Number(newLat);
-              const homeLon = Number(newLon);
-              const homeAlt = Number(newAlt);
+              const centroid = selectedRegistrationBase
+                ? selectedRegistrationBase.polygon.reduce(
+                    (acc, point) => ({ lat: acc.lat + point.lat, lon: acc.lon + point.lon }),
+                    { lat: 0, lon: 0 }
+                  )
+                : null;
+              const homeLat = selectedRegistrationBase
+                ? centroid!.lat / selectedRegistrationBase.polygon.length
+                : Number(newLat);
+              const homeLon = selectedRegistrationBase
+                ? centroid!.lon / selectedRegistrationBase.polygon.length
+                : Number(newLon);
+              const homeAlt = selectedRegistrationBase ? selectedRegistrationBase.homeAlt : Number(newAlt);
               if (!id) return;
               if (!Number.isFinite(homeLat) || !Number.isFinite(homeLon) || !Number.isFinite(homeAlt)) return;
-              onRegisterDrone({ id, name: id.toUpperCase(), homeLat, homeLon, homeAlt });
+              onRegisterDrone({
+                id,
+                name: id.toUpperCase(),
+                homeLat,
+                homeLon,
+                homeAlt,
+                homeBaseId: selectedRegistrationBase?.id
+              });
               setNewId("");
+              setNewHomeBaseId("");
               setShowRegister(false);
             }}
           >
             <input className="input text-[11px]" placeholder="Drone ID" value={newId} onChange={(e) => setNewId(e.target.value)} />
+            <select className="input text-[11px]" value={newHomeBaseId} onChange={(e) => setNewHomeBaseId(e.target.value)}>
+              <option value="">No home base</option>
+              {availableRegistrationBases.map((base) => (
+                <option key={base.id} value={base.id}>
+                  {base.name}
+                </option>
+              ))}
+            </select>
             <div className="grid grid-cols-3 gap-1.5">
-              <input className="input text-[11px]" placeholder="Lat" value={newLat} onChange={(e) => setNewLat(e.target.value)} />
-              <input className="input text-[11px]" placeholder="Lon" value={newLon} onChange={(e) => setNewLon(e.target.value)} />
-              <input className="input text-[11px]" placeholder="Alt" value={newAlt} onChange={(e) => setNewAlt(e.target.value)} />
+              <input
+                className="input text-[11px]"
+                placeholder="Lat"
+                value={newLat}
+                onChange={(e) => setNewLat(e.target.value)}
+                disabled={Boolean(selectedRegistrationBase)}
+              />
+              <input
+                className="input text-[11px]"
+                placeholder="Lon"
+                value={newLon}
+                onChange={(e) => setNewLon(e.target.value)}
+                disabled={Boolean(selectedRegistrationBase)}
+              />
+              <input
+                className="input text-[11px]"
+                placeholder="Alt"
+                value={newAlt}
+                onChange={(e) => setNewAlt(e.target.value)}
+                disabled={Boolean(selectedRegistrationBase)}
+              />
             </div>
+            {selectedRegistrationBase ? (
+              <div className="rounded border border-red-300/12 bg-black/15 px-2 py-1.5 text-[10px] text-red-100/60">
+                New drone will be auto-packed into <span className="text-white">{selectedRegistrationBase.name}</span>. Bases already tied to swarm groups are managed from the home-base panel instead.
+              </div>
+            ) : null}
             <div className="grid grid-cols-2 gap-1.5">
               <button className="btn-primary w-full text-[10px]" type="submit">Register</button>
               <button

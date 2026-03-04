@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { UserRole } from "@prisma/client";
+import { FlightState, UserRole } from "@prisma/client";
 import { z } from "zod";
 import { requireAuth, requireRoles } from "../auth/rbac";
 import { ALL_FORMATION_NAMES, SwarmEngine, type FormationName } from "../core/SwarmEngine";
@@ -55,7 +55,7 @@ const engageSchema = z.object({
 });
 
 const maneuverSchema = z.object({
-  type: z.enum(["orbit", "expand", "contract", "rotate", "search_grid", "search_spiral", "escort", "perimeter", "corridor"]),
+  type: z.enum(["orbit", "fibonacci_orbit", "expand", "contract", "rotate", "search_grid", "search_spiral", "search_expanding_square", "escort", "perimeter", "corridor"]),
   params: z.record(z.unknown()).default({})
 });
 
@@ -281,6 +281,25 @@ export async function swarmRoutes(server: FastifyInstance, bus?: TelemetryBus): 
       };
 
       const targets = engine.computeFollowerTargets(leaderPos, group.followerIds, formationParams);
+      const groupDrones = await prisma.drone.findMany({
+        where: {
+          id: {
+            in: [group.leaderId, ...group.followerIds]
+          }
+        },
+        select: {
+          id: true,
+          status: true
+        }
+      });
+      const groundedDroneIds = groupDrones
+        .filter((drone) => drone.status === FlightState.GROUNDED || drone.status === FlightState.ARMED)
+        .map((drone) => drone.id);
+      const takeoffAltitude = Math.max(
+        30,
+        leaderPos.alt,
+        ...targets.map((target) => target.alt)
+      );
 
       // Transition state to FORMING
       await prisma.swarmGroup.update({
@@ -290,6 +309,16 @@ export async function swarmRoutes(server: FastifyInstance, bus?: TelemetryBus): 
 
       // Send initial setWaypoint commands to position followers
       if (bus) {
+        for (const droneId of groundedDroneIds) {
+          await bus.publish(RedisChannels.commands, {
+            droneId,
+            type: "takeoff",
+            params: { altitude: takeoffAltitude },
+            requestedBy: "swarm-engine",
+            requestedAt: new Date().toISOString()
+          });
+        }
+
         for (const target of targets) {
           await bus.publish(RedisChannels.commands, {
             droneId: target.droneId,
@@ -313,7 +342,7 @@ export async function swarmRoutes(server: FastifyInstance, bus?: TelemetryBus): 
         });
       }
 
-      reply.send({ engaged: true, targets });
+      reply.send({ engaged: true, targets, launchedDroneIds: groundedDroneIds, takeoffAltitude });
     }
   );
 

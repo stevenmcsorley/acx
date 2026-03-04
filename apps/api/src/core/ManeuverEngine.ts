@@ -2,14 +2,55 @@ import { offsetLatLon } from "../simulation/geo";
 import type { FormationParams } from "./SwarmEngine";
 import { SwarmEngine } from "./SwarmEngine";
 
+const DEG_TO_RAD = Math.PI / 180;
+const TWO_PI = Math.PI * 2;
+const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+
+function rotateLocalOffset(north: number, east: number, headingDeg: number): { north: number; east: number } {
+  if (!headingDeg) {
+    return { north, east };
+  }
+  const rad = headingDeg * DEG_TO_RAD;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  return {
+    north: north * cos - east * sin,
+    east: north * sin + east * cos
+  };
+}
+
+function buildSearchGridLanePlan(width: number, desiredLaneSpacing: number, droneCount: number): {
+  laneCount: number;
+  actualLaneSpacing: number;
+  laneOffsets: number[];
+  bandCount: number;
+} {
+  const effectiveDroneCount = Math.max(droneCount, 1);
+  const minimumLaneCount = Math.max(effectiveDroneCount, Math.floor(width / desiredLaneSpacing) + 1);
+  const laneCount = Math.max(effectiveDroneCount, Math.ceil(minimumLaneCount / effectiveDroneCount) * effectiveDroneCount);
+  const actualLaneSpacing = laneCount > 1 ? width / (laneCount - 1) : 0;
+  const laneOffsets = Array.from({ length: laneCount }, (_, index) =>
+    laneCount === 1 ? 0 : -width / 2 + index * actualLaneSpacing
+  );
+
+  return {
+    laneCount,
+    actualLaneSpacing,
+    laneOffsets,
+    bandCount: laneCount / effectiveDroneCount
+  };
+}
+
 export type ManeuverType =
   | "hold"
   | "orbit"
+  | "fibonacci_orbit"
   | "expand"
   | "contract"
   | "rotate"
   | "search_grid"
   | "search_spiral"
+  | "search_expanding_square"
   | "escort"
   | "perimeter"
   | "corridor";
@@ -55,6 +96,8 @@ export class ManeuverEngine {
         return this.tickHold(leader, droneIds, formationParams);
       case "orbit":
         return this.tickOrbit(leader, droneIds, formationParams);
+      case "fibonacci_orbit":
+        return this.tickFibonacciOrbit(leader, droneIds, formationParams);
       case "expand":
         return this.tickExpand(leader, droneIds, formationParams);
       case "contract":
@@ -65,6 +108,8 @@ export class ManeuverEngine {
         return this.tickSearchGrid(leader, droneIds, formationParams);
       case "search_spiral":
         return this.tickSearchSpiral(leader, droneIds, formationParams);
+      case "search_expanding_square":
+        return this.tickSearchExpandingSquare(leader, droneIds, formationParams);
       case "escort":
         return this.tickEscort(leader, droneIds, formationParams);
       case "perimeter":
@@ -164,9 +209,47 @@ export class ManeuverEngine {
     }
 
     return droneIds.map((droneId, idx) => {
-      const angle = baseAngle + (2 * Math.PI * idx) / droneIds.length;
+      const angle = baseAngle + (TWO_PI * idx) / droneIds.length;
       const pos = offsetLatLon(centerLat, centerLon, Math.cos(angle) * radius, Math.sin(angle) * radius);
       return { droneId, lat: pos.lat, lon: pos.lon, alt };
+    });
+  }
+
+  private tickFibonacciOrbit(
+    leader: LeaderState,
+    droneIds: string[],
+    formationParams: FormationParams
+  ): Array<{ droneId: string; lat: number; lon: number; alt: number }> | null {
+    if (this.isTimedComplete()) {
+      return null;
+    }
+
+    const maxRadius = (this.params.maxRadius as number) ?? Math.max(formationParams.spacing * 3, 60);
+    const speed = (this.params.speed as number) ?? 4;
+    const direction = (this.params.direction as string) === "ccw" ? -1 : 1;
+    const centerLat = (this.params.centerLat as number) ?? leader.lat;
+    const centerLon = (this.params.centerLon as number) ?? leader.lon;
+    const alt = (this.params.alt as number) ?? leader.alt;
+    const phaseOffset = ((this.params.headingDeg as number) ?? formationParams.headingDeg ?? 0) * DEG_TO_RAD;
+    const effectiveCount = Math.max(droneIds.length, 1);
+    const omega = speed / Math.max(maxRadius, 1);
+    const baseAngle = phaseOffset + this.elapsed * omega * direction;
+
+    if (this.getDurationSec() === null) {
+      this.progress = ((this.elapsed * omega) / TWO_PI) % 1;
+    }
+
+    return droneIds.map((droneId, idx) => {
+      const sampleIndex = idx + 1;
+      const radius = maxRadius * Math.sqrt(sampleIndex / effectiveCount);
+      const angle = baseAngle + sampleIndex * GOLDEN_ANGLE;
+      const point = offsetLatLon(centerLat, centerLon, Math.cos(angle) * radius, Math.sin(angle) * radius);
+      return {
+        droneId,
+        lat: point.lat,
+        lon: point.lon,
+        alt
+      };
     });
   }
 
@@ -263,47 +346,83 @@ export class ManeuverEngine {
     const alt = (this.params.alt as number) ?? leader.alt;
     const centerLat = (this.params.centerLat as number) ?? leader.lat;
     const centerLon = (this.params.centerLon as number) ?? leader.lon;
+    const headingDeg = (this.params.headingDeg as number) ?? formationParams.headingDeg;
+    const desiredLaneSpacing = Math.max((this.params.laneSpacing as number) ?? formationParams.spacing, 10);
+    const { laneOffsets, bandCount } = buildSearchGridLanePlan(width, desiredLaneSpacing, droneIds.length);
 
-    // Lawnmower pattern: formation moves as a unit
-    const swathWidth = formationParams.spacing * droneIds.length;
-    const numPasses = Math.ceil(height / swathWidth);
-    const totalDistance = numPasses * width + (numPasses - 1) * swathWidth;
-    const distanceCovered = this.elapsed * speed;
-    this.progress = Math.min(distanceCovered / totalDistance, 1);
-
-    if (this.progress >= 1) return null;
-
-    // Calculate current position in lawnmower pattern
-    let remaining = distanceCovered;
-    let pass = 0;
-    let x = 0;
-    let y = -height / 2;
-
-    while (pass < numPasses && remaining > 0) {
-      if (remaining <= width) {
-        x = pass % 2 === 0 ? -width / 2 + remaining : width / 2 - remaining;
-        y = -height / 2 + pass * swathWidth;
-        break;
+    let totalDistance = 0;
+    for (let band = 0; band < bandCount; band += 1) {
+      totalDistance += height;
+      if (band < bandCount - 1) {
+        const currentLeadLane = band * droneIds.length;
+        const nextLeadLane = Math.min((band + 1) * droneIds.length, laneOffsets.length - 1);
+        totalDistance += Math.abs(laneOffsets[nextLeadLane] - laneOffsets[currentLeadLane]);
       }
-      remaining -= width;
-      if (remaining <= swathWidth && pass < numPasses - 1) {
-        x = pass % 2 === 0 ? width / 2 : -width / 2;
-        y = -height / 2 + pass * swathWidth + remaining;
-        remaining = 0;
-        break;
-      }
-      remaining -= swathWidth;
-      pass++;
     }
 
-    // Position formation at the calculated center point
-    const center = offsetLatLon(centerLat, centerLon, y, x);
-    return this.computeFormationTargets(
-      { ...leader, lat: center.lat, lon: center.lon, alt },
-      droneIds,
-      { ...formationParams, formation: "line_abreast" },
-      0
-    );
+    const distanceCovered = this.elapsed * speed;
+    this.progress = Math.min(distanceCovered / Math.max(totalDistance, 1), 1);
+    if (distanceCovered >= totalDistance) {
+      return null;
+    }
+
+    let remaining = distanceCovered;
+    let currentBand = 0;
+    let inShift = false;
+    let segmentDistance = height;
+
+    for (let band = 0; band < bandCount; band += 1) {
+      const currentLeadLane = band * droneIds.length;
+      const nextLeadLane = Math.min((band + 1) * droneIds.length, laneOffsets.length - 1);
+      const shiftDistance = band < bandCount - 1 ? Math.abs(laneOffsets[nextLeadLane] - laneOffsets[currentLeadLane]) : 0;
+      const bandDistance = height + shiftDistance;
+      if (remaining <= bandDistance) {
+        currentBand = band;
+        if (remaining > height) {
+          inShift = true;
+          remaining -= height;
+          segmentDistance = shiftDistance;
+        } else {
+          segmentDistance = height;
+        }
+        break;
+      }
+      remaining -= bandDistance;
+    }
+
+    const passSouthToNorth = currentBand % 2 === 0;
+    const startNorth = passSouthToNorth ? -height / 2 : height / 2;
+    const endNorth = -startNorth;
+    const bandStartLane = currentBand * droneIds.length;
+    const nextBandStartLane = Math.min((currentBand + 1) * droneIds.length, laneOffsets.length - 1);
+
+    return droneIds.map((droneId, index) => {
+      const laneIndex = bandStartLane + index;
+      const nextLaneIndex = Math.min(nextBandStartLane + index, laneOffsets.length - 1);
+      const currentEast = laneOffsets[laneIndex];
+      const nextEast = laneOffsets[nextLaneIndex];
+
+      let localNorth = startNorth;
+      let localEast = currentEast;
+
+      if (!inShift) {
+        const along = Math.min(remaining, segmentDistance);
+        localNorth = passSouthToNorth ? startNorth + along : startNorth - along;
+      } else {
+        localNorth = endNorth;
+        const shiftProgress = segmentDistance > 0 ? remaining / segmentDistance : 0;
+        localEast = currentEast + (nextEast - currentEast) * Math.min(Math.max(shiftProgress, 0), 1);
+      }
+
+      const rotated = rotateLocalOffset(localNorth, localEast, headingDeg);
+      const point = offsetLatLon(centerLat, centerLon, rotated.north, rotated.east);
+      return {
+        droneId,
+        lat: point.lat,
+        lon: point.lon,
+        alt
+      };
+    });
   }
 
   private tickSearchSpiral(
@@ -340,6 +459,69 @@ export class ManeuverEngine {
       { ...leader, lat: center.lat, lon: center.lon, alt },
       droneIds,
       { ...formationParams, formation: "column" },
+      0
+    );
+  }
+
+  private tickSearchExpandingSquare(
+    leader: LeaderState,
+    droneIds: string[],
+    formationParams: FormationParams
+  ): Array<{ droneId: string; lat: number; lon: number; alt: number }> | null {
+    const maxRadius = (this.params.maxRadius as number) ?? 400;
+    const legSpacing = (this.params.legSpacing as number) ?? Math.max(formationParams.spacing * 2, 40);
+    const speed = (this.params.speed as number) ?? 5;
+    const alt = (this.params.alt as number) ?? leader.alt;
+    const centerLat = (this.params.centerLat as number) ?? leader.lat;
+    const centerLon = (this.params.centerLon as number) ?? leader.lon;
+
+    const segments: Array<{ northDir: number; eastDir: number; length: number }> = [];
+    const directions = [
+      { northDir: 0, eastDir: 1 },
+      { northDir: 1, eastDir: 0 },
+      { northDir: 0, eastDir: -1 },
+      { northDir: -1, eastDir: 0 }
+    ];
+
+    let maxExtent = 0;
+    let segmentIndex = 0;
+    while (maxExtent < maxRadius + legSpacing) {
+      const length = Math.ceil((segmentIndex + 1) / 2) * legSpacing;
+      const direction = directions[segmentIndex % directions.length];
+      segments.push({ ...direction, length });
+      maxExtent = Math.max(maxExtent, length);
+      segmentIndex += 1;
+    }
+
+    const totalDistance = segments.reduce((sum, segment) => sum + segment.length, 0);
+    const distanceCovered = this.elapsed * speed;
+    this.progress = Math.min(distanceCovered / Math.max(totalDistance, 1), 1);
+    if (distanceCovered >= totalDistance) {
+      return null;
+    }
+
+    let remaining = distanceCovered;
+    let north = 0;
+    let east = 0;
+
+    for (const segment of segments) {
+      if (remaining <= segment.length) {
+        north += segment.northDir * remaining;
+        east += segment.eastDir * remaining;
+        remaining = 0;
+        break;
+      }
+
+      north += segment.northDir * segment.length;
+      east += segment.eastDir * segment.length;
+      remaining -= segment.length;
+    }
+
+    const center = offsetLatLon(centerLat, centerLon, north, east);
+    return this.computeFormationTargets(
+      { ...leader, lat: center.lat, lon: center.lon, alt },
+      droneIds,
+      formationParams,
       0
     );
   }

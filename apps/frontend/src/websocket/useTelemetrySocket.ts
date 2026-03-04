@@ -69,7 +69,13 @@ export function useTelemetrySocket(): void {
 
         if (payload.type === "swarmStatus") {
           const status = payload as SwarmStatusMessage;
-          setSwarmGroupStatus(status.groupId, status.state, status.formationQuality, status.maneuver);
+          setSwarmGroupStatus(
+            status.groupId,
+            status.state,
+            status.formationQuality,
+            status.maneuver,
+            status.maneuverProgress
+          );
         }
       };
 

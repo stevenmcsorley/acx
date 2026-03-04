@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiClient } from "./api/client";
 import { GlobeViewer } from "./cesium/GlobeViewer";
+import { MissionPreviewViewer } from "./cesium/MissionPreviewViewer";
 import { AccordionSection } from "./components/AccordionSection";
 import { CameraFeeds } from "./components/CameraFeeds";
 import { CommandPanel } from "./components/CommandPanel";
@@ -9,6 +10,7 @@ import { FlightHud } from "./components/FlightHud";
 import { GeofencePanel } from "./components/GeofencePanel";
 import { ManualFlightPanel } from "./components/ManualFlightPanel";
 import { MissionPlannerPanel } from "./components/MissionPlannerPanel";
+import { MissionLibraryPanel } from "./components/MissionLibraryPanel";
 import { RecordingOverlay } from "./components/RecordingOverlay";
 import { RecordsPanel } from "./components/RecordsPanel";
 import { SwarmManagerPanel } from "./components/SwarmManagerPanel";
@@ -18,10 +20,10 @@ import { TopBar } from "./components/TopBar";
 import { WaypointOpsPanel } from "./components/WaypointOpsPanel";
 import { SwarmGroupOps } from "./components/SwarmGroupOps";
 import { WaypointEditorDrawer } from "./components/WaypointEditorDrawer";
-import type { NavTab } from "./components/TopBar";
-import type { ScenarioPreset } from "./types/domain";
+import type { HomeBaseRecord, ScenarioPreset } from "./types/domain";
 import { useFlightRecorder } from "./hooks/useFlightRecorder";
 import { useVideoRecorder } from "./hooks/useVideoRecorder";
+import { getPreferredMissionForDrone } from "./lib/missionSelection";
 import { useGroundControlStore } from "./store/useGroundControlStore";
 import { useTelemetrySocket } from "./websocket/useTelemetrySocket";
 
@@ -150,6 +152,7 @@ export default function App(): JSX.Element {
   const setSwarmGroupStatus = useGroundControlStore((s) => s.setSwarmGroupStatus);
   const setGeofenceDrawingState = useGroundControlStore((s) => s.setGeofenceDrawing);
   const clearGeofenceDrawPoints = useGroundControlStore((s) => s.clearGeofenceDrawPoints);
+  const addGeofenceDrawPoint = useGroundControlStore((s) => s.addGeofenceDrawPoint);
   const plannerMissionName = useGroundControlStore((s) => s.plannerMissionName);
   const setPlannerMissionName = useGroundControlStore((s) => s.setPlannerMissionName);
   const waypointDefaults = useGroundControlStore((s) => s.waypointDefaults);
@@ -166,6 +169,17 @@ export default function App(): JSX.Element {
   const [selectedPlannerWaypointIndex, setSelectedPlannerWaypointIndex] = useState<number | null>(null);
   const [swarmPresets, setSwarmPresets] = useState<ScenarioPreset[]>([]);
   const [fpvPitchDeg, setFpvPitchDeg] = useState(0);
+  const [editingMissionId, setEditingMissionId] = useState<string | null>(null);
+  const [selectedMissionLibraryId, setSelectedMissionLibraryId] = useState<string | null>(null);
+  const [plannerFocusToken, setPlannerFocusToken] = useState(0);
+  const [homeBases, setHomeBases] = useState<HomeBaseRecord[]>([]);
+  const [areaDrawingKind, setAreaDrawingKind] = useState<"geofence" | "homeBase" | null>(null);
+  const [ghostPreviewOptions, setGhostPreviewOptions] = useState({
+    enabled: true,
+    showArea: true,
+    showTracks: true,
+    showMarkers: true
+  });
 
   const flightRecorder = useFlightRecorder();
   const videoRecorder = useVideoRecorder();
@@ -191,14 +205,19 @@ export default function App(): JSX.Element {
   const activeDrones = useMemo(() => drones.filter((drone) => !drone.archivedAt), [drones]);
 
   const latestMissionForSelectedDrone = useMemo(() => {
-    if (!selectedDroneId) return undefined;
-    return missions
-      .filter((mission) => mission.droneId === selectedDroneId && mission.waypoints.length > 0)
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
+    return getPreferredMissionForDrone(missions, selectedDroneId);
   }, [missions, selectedDroneId]);
 
   const selectedPlannerWaypoint =
     selectedPlannerWaypointIndex !== null ? plannerWaypoints[selectedPlannerWaypointIndex] : undefined;
+  const editingMission = useMemo(
+    () => missions.find((mission) => mission.id === editingMissionId) ?? null,
+    [editingMissionId, missions]
+  );
+  const selectedMissionLibrary = useMemo(
+    () => missions.find((mission) => mission.id === selectedMissionLibraryId) ?? missions[0] ?? null,
+    [missions, selectedMissionLibraryId]
+  );
   const eligibleTriggerSwarmGroups = useMemo(
     () => swarmGroups.filter((group) => group.leaderId === selectedDroneId && group.state !== "DISBANDING"),
     [selectedDroneId, swarmGroups]
@@ -212,6 +231,19 @@ export default function App(): JSX.Element {
   const lastSelectedAlertRef = useRef("");
 
   useTelemetrySocket();
+
+  useEffect(() => {
+    if (missions.length === 0) {
+      if (selectedMissionLibraryId !== null) {
+        setSelectedMissionLibraryId(null);
+      }
+      return;
+    }
+
+    if (!selectedMissionLibraryId || !missions.some((mission) => mission.id === selectedMissionLibraryId)) {
+      setSelectedMissionLibraryId(missions[0].id);
+    }
+  }, [missions, selectedMissionLibraryId]);
 
   useEffect(() => {
     if (!token) {
@@ -310,7 +342,7 @@ export default function App(): JSX.Element {
   }, [plannerWaypoints, selectedPlannerWaypointIndex]);
 
   useEffect(() => {
-    if (!token || !selectedPlannerWaypoint || swarmPresets.length > 0) {
+    if (!token || swarmPresets.length > 0) {
       return;
     }
 
@@ -320,9 +352,9 @@ export default function App(): JSX.Element {
         setSwarmPresets(result.presets as ScenarioPreset[]);
       })
       .catch(() => {
-        // Keep drawer usable even if preset fetch fails.
+        // Keep UI usable even if preset fetch fails.
       });
-  }, [api, selectedPlannerWaypoint, swarmPresets.length, token]);
+  }, [api, swarmPresets.length, token]);
 
   const resetMissionWorkspace = useCallback(
     (message?: string) => {
@@ -367,16 +399,8 @@ export default function App(): JSX.Element {
       }
     }
 
-    if (mode.startsWith("mission-complete") && !previousMode.startsWith("mission-complete")) {
-      showMissionOutcome(
-        {
-          type: "success",
-          title: "MISSION SUCCESSFUL",
-          subtitle: `${selectedDroneId} completed route and returned to launch`
-        },
-        false
-      );
-      setStatus(`${selectedDroneId}: mission successful`);
+    if (mode.startsWith("route-complete") && !previousMode.startsWith("route-complete")) {
+      setStatus(`${selectedDroneId}: route complete, returning to launch`);
       return;
     }
 
@@ -405,16 +429,21 @@ export default function App(): JSX.Element {
     lastSelectedAlertRef.current = key;
 
     const message = latest.message.toLowerCase();
-    if (message.includes("mission complete")) {
+    if (message.includes("mission successful")) {
       showMissionOutcome(
         {
           type: "success",
           title: "MISSION SUCCESSFUL",
-          subtitle: `${selectedDroneId} completed route and returned to launch`
+          subtitle: `${selectedDroneId} completed route and landed at home`
         },
         false
       );
       setStatus(`${selectedDroneId}: mission successful`);
+      return;
+    }
+
+    if (message.includes("route complete")) {
+      setStatus(`${selectedDroneId}: route complete, returning to launch`);
       return;
     }
 
@@ -433,16 +462,18 @@ export default function App(): JSX.Element {
     if (!token) return;
     setBusy(true);
     try {
-      const [dronesResponse, missionsResponse, geofenceResponse, swarmResponse] = await Promise.all([
+      const [dronesResponse, missionsResponse, geofenceResponse, swarmResponse, homeBaseResponse] = await Promise.all([
         api.fetchDrones(),
         api.fetchMissions(),
         api.fetchGeofences(),
-        api.fetchSwarmGroups()
+        api.fetchSwarmGroups(),
+        api.fetchHomeBases()
       ]);
       setDrones(dronesResponse.drones);
       setMissions(missionsResponse.missions);
       setGeofences(geofenceResponse.geofences);
       setSwarmGroups(swarmResponse.groups as SwarmGroup[]);
+      setHomeBases(homeBaseResponse.homeBases);
       const liveCount = dronesResponse.drones.filter((drone) => !drone.archivedAt).length;
       const archivedCount = dronesResponse.drones.length - liveCount;
       setStatus(`Synced ${liveCount} live drones${archivedCount > 0 ? ` | ${archivedCount} archived` : ""}`);
@@ -495,12 +526,26 @@ export default function App(): JSX.Element {
   );
 
   const handleRegisterDrone = useCallback(
-    (input: { id: string; name?: string; homeLat: number; homeLon: number; homeAlt?: number }) => {
+    (input: { id: string; name?: string; homeLat: number; homeLon: number; homeAlt?: number; homeBaseId?: string }) => {
       run(async () => {
         await api.registerDrone({ ...input, adapter: "mock" });
+        let assignmentError = "";
+        if (input.homeBaseId) {
+          try {
+            await api.assignDroneToHomeBase(input.homeBaseId, input.id);
+          } catch (error) {
+            assignmentError = error instanceof Error ? error.message : "home base assignment failed";
+          }
+        }
         await refresh();
         setSelectedDrone(input.id);
-        setStatus(`Drone ${input.id} registered`);
+        setStatus(
+          input.homeBaseId
+            ? assignmentError
+              ? `Drone ${input.id} registered, but home base assignment failed: ${assignmentError}`
+              : `Drone ${input.id} registered and assigned to a home base`
+            : `Drone ${input.id} registered`
+        );
       }).catch(() => {});
     },
     [api, refresh, setSelectedDrone]
@@ -570,26 +615,102 @@ export default function App(): JSX.Element {
   );
 
   const handleCreateGeofence = useCallback(
-    (name: string, _polygon: Array<{ lat: number; lon: number }>) => {
+    (name: string, polygon: Array<{ lat: number; lon: number }>) => {
       run(async () => {
-        // TODO: call geofence creation API once endpoint is finalized.
+        await api.createGeofence({ name, polygon, isActive: true });
         clearGeofenceDrawPoints();
+        setAreaDrawingKind(null);
         await refresh();
         setStatus(`Geofence "${name}" created`);
       }).catch(() => {});
     },
-    [clearGeofenceDrawPoints, refresh]
+    [api, clearGeofenceDrawPoints, refresh]
+  );
+
+  const handleCreateHomeBase = useCallback(
+    (name: string, polygon: Array<{ lat: number; lon: number }>, swarmGroupId?: string, homeAlt = 0) => {
+      run(async () => {
+        const result = await api.createHomeBase({ name, polygon, swarmGroupId, homeAlt });
+        clearGeofenceDrawPoints();
+        setAreaDrawingKind(null);
+        await refresh();
+        const assignedCount = result.assignedDroneIds.length;
+        setStatus(
+          assignedCount > 0
+            ? `Home base "${name}" created and assigned ${assignedCount} drone${assignedCount === 1 ? "" : "s"}`
+            : `Home base "${name}" created`
+        );
+      }).catch(() => {});
+    },
+    [api, clearGeofenceDrawPoints, refresh]
+  );
+
+  const handleUpdateHomeBase = useCallback(
+    (
+      homeBaseId: string,
+      patch: Partial<{
+        name: string;
+        polygon: Array<{ lat: number; lon: number }>;
+        swarmGroupId: string | null;
+        homeAlt: number;
+        slots: import("./types/domain").HomeBaseSlot[] | null;
+      }>
+    ) => {
+      run(async () => {
+        const result = await api.updateHomeBase(homeBaseId, patch);
+        await refresh();
+        const assignedCount = result.assignedDroneIds.length;
+        setStatus(
+          assignedCount > 0
+            ? `Home base updated and assigned ${assignedCount} drone${assignedCount === 1 ? "" : "s"}`
+            : "Home base updated"
+        );
+      }).catch(() => {});
+    },
+    [api, refresh]
+  );
+
+  const handleDeleteHomeBase = useCallback(
+    (homeBaseId: string) => {
+      const base = homeBases.find((item) => item.id === homeBaseId);
+      if (!base) {
+        return;
+      }
+      if (!window.confirm(`Delete home base "${base.name}"?`)) {
+        return;
+      }
+      run(async () => {
+        await api.deleteHomeBase(homeBaseId);
+        await refresh();
+        setStatus(`Home base "${base.name}" deleted`);
+      }).catch(() => {});
+    },
+    [api, homeBases, refresh]
+  );
+
+  const handleToggleAreaDrawing = useCallback(
+    (kind: "geofence" | "homeBase" | null) => {
+      setAreaDrawingKind(kind);
+      setGeofenceDrawingState(kind !== null);
+      if (kind === null) {
+        clearGeofenceDrawPoints();
+      }
+    },
+    [clearGeofenceDrawPoints, setGeofenceDrawingState]
   );
 
   const handleImportMission = useCallback(
     (waypoints: import("./types/domain").MissionWaypoint[], name: string) => {
+      setEditingMissionId(null);
       setPlannerWaypoints(waypoints);
+      setPlannerMissionName(name);
       setPlannerEnabled(true);
       setSelectedPlannerWaypointIndex(waypoints.length > 0 ? 0 : null);
       setMissionRailOpen("mission");
+      setPlannerFocusToken((value) => value + 1);
       setStatus(`Imported ${waypoints.length} waypoints from "${name}"`);
     },
-    [setPlannerWaypoints, setPlannerEnabled]
+    [setPlannerMissionName, setPlannerWaypoints, setPlannerEnabled]
   );
 
   const handleAddPlannerWaypoint = useCallback(
@@ -618,9 +739,11 @@ export default function App(): JSX.Element {
   }, []);
 
   const handleClearPlanner = useCallback(() => {
+    setEditingMissionId(null);
+    setPlannerMissionName("");
     setSelectedPlannerWaypointIndex(null);
     clearPlannerWaypoints();
-  }, [clearPlannerWaypoints]);
+  }, [clearPlannerWaypoints, setPlannerMissionName]);
 
   const handleRemovePlannerWaypoint = useCallback(() => {
     if (selectedPlannerWaypointIndex === null) {
@@ -645,18 +768,28 @@ export default function App(): JSX.Element {
     run(async () => {
       const missionName = plannerMissionName || `Mission-${new Date().toISOString()}`;
       const waypointCount = plannerWaypoints.length;
-      await api.createMission({
-        droneId: selectedDroneId,
-        name: missionName,
-        waypoints: plannerWaypoints
-      });
+      if (editingMissionId) {
+        await api.updateMission(editingMissionId, {
+          droneId: selectedDroneId,
+          name: missionName,
+          waypoints: plannerWaypoints
+        });
+      } else {
+        await api.createMission({
+          droneId: selectedDroneId,
+          name: missionName,
+          waypoints: plannerWaypoints
+        });
+      }
+      setEditingMissionId(null);
+      setPlannerMissionName("");
       setSelectedPlannerWaypointIndex(null);
       clearPlannerWaypoints();
       setPlannerEnabled(false);
       await refresh();
-      setStatus(`Mission uploaded: ${missionName} (${waypointCount} waypoints)`);
+      setStatus(`${editingMissionId ? "Mission updated" : "Mission uploaded"}: ${missionName} (${waypointCount} waypoints)`);
     }).catch(() => {});
-  }, [api, clearPlannerWaypoints, plannerMissionName, plannerWaypoints, refresh, selectedDroneId, setPlannerEnabled]);
+  }, [api, clearPlannerWaypoints, editingMissionId, plannerMissionName, plannerWaypoints, refresh, selectedDroneId, setPlannerEnabled, setPlannerMissionName]);
 
   const handleMissionExecute = useCallback(() => {
     if (!selectedDroneId || !latestMissionForSelectedDrone) {
@@ -670,6 +803,72 @@ export default function App(): JSX.Element {
       setStatus(`Mission execution started: ${latestMissionForSelectedDrone.name}`);
     }).catch(() => {});
   }, [api, latestMissionForSelectedDrone, refresh, selectedDroneId]);
+
+  const handleLoadMissionIntoPlanner = useCallback((missionId: string) => {
+    const mission = missions.find((candidate) => candidate.id === missionId);
+    if (!mission) {
+      setStatus("Mission not found");
+      return;
+    }
+
+    setEditingMissionId(mission.id);
+    setSelectedDrone(mission.droneId);
+    setPlannerMissionName(mission.name);
+    setPlannerWaypoints(mission.waypoints);
+    setSelectedPlannerWaypointIndex(mission.waypoints.length > 0 ? 0 : null);
+    setPlannerEnabled(false);
+    setMissionRailOpen("mission");
+    setActiveTab("mission");
+    setPlannerFocusToken((value) => value + 1);
+    setStatus(`Loaded mission "${mission.name}" into planner`);
+  }, [missions, setActiveTab, setPlannerEnabled, setPlannerMissionName, setPlannerWaypoints, setSelectedDrone]);
+
+  const handleDeleteMission = useCallback((missionId: string) => {
+    const mission = missions.find((candidate) => candidate.id === missionId);
+    if (!mission) {
+      return;
+    }
+    if (!window.confirm(`Delete mission "${mission.name}"?`)) {
+      return;
+    }
+
+    run(async () => {
+      await api.deleteMission(missionId);
+      if (selectedMissionLibraryId === missionId) {
+        setSelectedMissionLibraryId(null);
+      }
+      if (editingMissionId === missionId) {
+        setEditingMissionId(null);
+        setPlannerMissionName("");
+      }
+      await refresh();
+      setStatus(`Mission "${mission.name}" deleted`);
+    }).catch(() => {});
+  }, [api, editingMissionId, missions, refresh, selectedMissionLibraryId, setPlannerMissionName]);
+
+  const handleExecuteMissionById = useCallback((missionId: string) => {
+    const mission = missions.find((candidate) => candidate.id === missionId);
+    if (!mission) {
+      return;
+    }
+
+    run(async () => {
+      setMissionOutcome(null);
+      await api.executeMission(missionId);
+      await refresh();
+      setStatus(`Mission execution started: ${mission.name}`);
+    }).catch(() => {});
+  }, [api, missions, refresh]);
+
+  const handleCreateMissionDraft = useCallback(() => {
+    setEditingMissionId(null);
+    setPlannerMissionName("");
+    setPlannerWaypoints([]);
+    setSelectedPlannerWaypointIndex(null);
+    setPlannerEnabled(true);
+    setMissionRailOpen("mission");
+    setActiveTab("mission");
+  }, [setActiveTab, setPlannerEnabled, setPlannerMissionName, setPlannerWaypoints]);
 
   // ----- Login screen -----
   if (!token || !user) {
@@ -777,15 +976,17 @@ export default function App(): JSX.Element {
             onEngageGroup={(groupId) => {
               const group = swarmGroups.find((g) => g.id === groupId);
               if (!group) return;
-              const leaderTel = telemetryByDrone[group.leaderId];
-              if (!leaderTel) {
-                setStatus("Leader drone has no telemetry — arm and takeoff first");
-                return;
-              }
+              setSelectedDrone(group.leaderId);
               run(async () => {
-                await api.engageSwarmGroup(groupId, leaderTel.position);
+                const leaderTel = telemetryByDrone[group.leaderId];
+                const result = await api.engageSwarmGroup(groupId, leaderTel?.position);
                 updateSwarmGroup(groupId, { state: "FORMING" });
-                setStatus(`Swarm "${group.name}" engaged — followers tracking leader in ${group.formation} formation`);
+                const launchedCount = result.launchedDroneIds?.length ?? 0;
+                setStatus(
+                  launchedCount > 0
+                    ? `Swarm "${group.name}" launching ${launchedCount} grounded drone${launchedCount === 1 ? "" : "s"} and forming up`
+                    : `Swarm "${group.name}" engaged — followers tracking leader in ${group.formation} formation`
+                );
               }).catch(() => {});
             }}
             onUpdateGroup={(groupId, patch) => {
@@ -842,6 +1043,32 @@ export default function App(): JSX.Element {
             onClearAll={videoRecorder.clearAllSessions}
           />
         </div>
+      ) : activeTab === "missions" ? (
+        <>
+          <main className="grid min-h-0 flex-1 gap-2 p-2 lg:grid-cols-[minmax(0,1fr)_700px]">
+            <section className="panel relative min-h-0 overflow-hidden">
+              <MissionPreviewViewer mission={selectedMissionLibrary} />
+            </section>
+
+            <MissionLibraryPanel
+              missions={missions}
+              drones={drones}
+              swarmGroups={swarmGroups}
+              selectedMissionId={selectedMissionLibrary?.id ?? null}
+              onSelectMission={setSelectedMissionLibraryId}
+              onCreateNew={handleCreateMissionDraft}
+              onEditMission={handleLoadMissionIntoPlanner}
+              onExecuteMission={handleExecuteMissionById}
+              onDeleteMission={handleDeleteMission}
+            />
+          </main>
+
+          <div className="px-2 pb-2">
+            <div className="panel flex items-center px-3 py-1.5 text-[11px] text-cyan-100/60">
+              {status || `Mission library | ${missions.length} saved missions`}
+            </div>
+          </div>
+        </>
       ) : activeTab === "mission" ? (
         <>
           <main className="grid min-h-0 flex-1 gap-2 p-2 lg:grid-cols-[minmax(0,1fr)_420px]">
@@ -851,6 +1078,7 @@ export default function App(): JSX.Element {
                 telemetryByDrone={telemetryByDrone}
                 telemetryHistoryByDrone={telemetryHistoryByDrone}
                 geofences={geofences}
+                homeBases={homeBases}
                 missions={missions}
                 selectedDroneId={selectedDroneId}
                 plannerEnabled={plannerEnabled}
@@ -859,10 +1087,16 @@ export default function App(): JSX.Element {
                 cameraMode={cameraMode}
                 fpvPitchDeg={fpvPitchDeg}
                 trailResetToken={trailResetToken}
+                focusPathKey={editingMissionId ? `${editingMissionId}:${plannerFocusToken}` : null}
+                areaDrawingMode={areaDrawingKind}
+                areaDrawPoints={geofenceDrawPoints}
+                onAddAreaDrawPoint={addGeofenceDrawPoint}
                 onAddWaypoint={handleAddPlannerWaypoint}
                 onUpdateWaypoint={updatePlannerWaypoint}
                 onSelectPlannerWaypoint={handleSelectPlannerWaypoint}
                 swarmGroups={swarmGroups}
+                swarmPresets={swarmPresets}
+                ghostPreviewOptions={ghostPreviewOptions}
                 onSelectDrone={setSelectedDrone}
               />
 	              <RecordingOverlay
@@ -952,6 +1186,7 @@ export default function App(): JSX.Element {
                 <FleetPanel
                   embedded
                   drones={drones}
+                  homeBases={homeBases}
                   telemetryByDrone={telemetryByDrone}
                   swarmGroups={swarmGroups}
                   selectedDroneId={selectedDroneId}
@@ -1002,15 +1237,17 @@ export default function App(): JSX.Element {
                     onEngage={(groupId) => {
                       const group = swarmGroups.find((g) => g.id === groupId);
                       if (!group) return;
-                      const leaderTel = telemetryByDrone[group.leaderId];
-                      if (!leaderTel) {
-                        setStatus("Cannot engage: no telemetry for leader drone");
-                        return;
-                      }
+                      setSelectedDrone(group.leaderId);
                       run(async () => {
-                        await api.engageSwarmGroup(groupId, leaderTel.position);
+                        const leaderTel = telemetryByDrone[group.leaderId];
+                        const result = await api.engageSwarmGroup(groupId, leaderTel?.position);
                         updateSwarmGroup(groupId, { state: "FORMING" });
-                        setStatus(`Swarm "${group.name}" engaged — followers tracking leader in ${group.formation} formation`);
+                        const launchedCount = result.launchedDroneIds?.length ?? 0;
+                        setStatus(
+                          launchedCount > 0
+                            ? `Swarm "${group.name}" launching ${launchedCount} grounded drone${launchedCount === 1 ? "" : "s"} and forming up`
+                            : `Swarm "${group.name}" engaged — followers tracking leader in ${group.formation} formation`
+                        );
                       }).catch(() => {});
                     }}
                     onDisengage={(groupId) => {
@@ -1034,7 +1271,14 @@ export default function App(): JSX.Element {
                   embedded
                   plannerEnabled={plannerEnabled}
                   waypoints={plannerWaypoints}
+                  selectedDroneId={selectedDroneId}
+                  selectedTelemetry={selectedTelemetry}
+                  latestMission={latestMissionForSelectedDrone ?? null}
+                  swarmGroups={swarmGroups}
+                  swarmPresets={swarmPresets}
+                  ghostPreviewOptions={ghostPreviewOptions}
                   selectedMissionName={latestMissionForSelectedDrone?.name}
+                  editingMissionName={editingMission?.name ?? null}
                   selectedWaypointIndex={selectedPlannerWaypointIndex}
                   canExecuteMission={Boolean(selectedDroneId && latestMissionForSelectedDrone)}
                   missionOutcome={missionOutcome}
@@ -1049,6 +1293,9 @@ export default function App(): JSX.Element {
                   onCompleteMission={acknowledgeMissionOutcome}
                   onUpload={handleMissionUpload}
                   onExecuteMission={handleMissionExecute}
+                  onGhostPreviewOptionsChange={(patch) =>
+                    setGhostPreviewOptions((current) => ({ ...current, ...patch }))
+                  }
                 />
               </AccordionSection>
 
@@ -1061,15 +1308,30 @@ export default function App(): JSX.Element {
                 <GeofencePanel
                   embedded
                   geofences={geofences}
+                  homeBases={homeBases}
+                  drones={drones}
+                  swarmGroups={swarmGroups}
                   onCreateGeofence={handleCreateGeofence}
+                  onCreateHomeBase={handleCreateHomeBase}
                   onToggleGeofence={(id, isActive) => {
-                    setStatus(`Geofence ${id} ${isActive ? "activated" : "deactivated"}`);
+                    run(async () => {
+                      await api.updateGeofence(id, { isActive });
+                      await refresh();
+                      setStatus(`Geofence ${id} ${isActive ? "activated" : "deactivated"}`);
+                    }).catch(() => {});
                   }}
                   onDeleteGeofence={(id) => {
-                    setStatus(`Geofence ${id} deleted`);
+                    run(async () => {
+                      await api.deleteGeofence(id);
+                      await refresh();
+                      setStatus(`Geofence ${id} deleted`);
+                    }).catch(() => {});
                   }}
+                  onUpdateHomeBase={handleUpdateHomeBase}
+                  onDeleteHomeBase={handleDeleteHomeBase}
                   drawingMode={geofenceDrawing}
-                  onToggleDrawing={setGeofenceDrawingState}
+                  drawingKind={areaDrawingKind}
+                  onToggleDrawing={handleToggleAreaDrawing}
                   drawPoints={geofenceDrawPoints}
                 />
               </AccordionSection>
@@ -1089,6 +1351,7 @@ export default function App(): JSX.Element {
             {/* Left column: Fleet */}
 	            <FleetPanel
 		              drones={drones}
+                  homeBases={homeBases}
 		              telemetryByDrone={telemetryByDrone}
                   swarmGroups={swarmGroups}
 		              selectedDroneId={selectedDroneId}
@@ -1097,7 +1360,7 @@ export default function App(): JSX.Element {
 		              onUpdateDroneHome={handleUpdateDroneHome}
                   onArchiveDrone={handleArchiveDrone}
                 onDeleteDrone={handleDeleteDrone}
-		            />
+	            />
 
             {/* Center: Globe */}
             <section ref={globeSectionRef} className="panel relative min-h-0 overflow-hidden">
@@ -1106,6 +1369,7 @@ export default function App(): JSX.Element {
                 telemetryByDrone={telemetryByDrone}
                 telemetryHistoryByDrone={telemetryHistoryByDrone}
                 geofences={geofences}
+                homeBases={homeBases}
                 missions={missions}
                 selectedDroneId={selectedDroneId}
                 plannerEnabled={plannerEnabled}
@@ -1114,10 +1378,15 @@ export default function App(): JSX.Element {
                 cameraMode={cameraMode}
                 fpvPitchDeg={fpvPitchDeg}
                 trailResetToken={trailResetToken}
+                areaDrawingMode={areaDrawingKind}
+                areaDrawPoints={geofenceDrawPoints}
+                onAddAreaDrawPoint={addGeofenceDrawPoint}
                 onAddWaypoint={handleAddPlannerWaypoint}
                 onUpdateWaypoint={updatePlannerWaypoint}
                 onSelectPlannerWaypoint={handleSelectPlannerWaypoint}
                 swarmGroups={swarmGroups}
+                swarmPresets={swarmPresets}
+                ghostPreviewOptions={ghostPreviewOptions}
                 onSelectDrone={setSelectedDrone}
               />
 	              <RecordingOverlay

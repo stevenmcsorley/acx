@@ -25,6 +25,7 @@ export interface SwarmGroup {
   state: SwarmState;
   maneuver?: string;
   formationQuality?: number;
+  maneuverProgress?: number;
 }
 
 type CameraMode = "global" | "follow" | "fpv" | "cinematic";
@@ -116,7 +117,7 @@ interface GroundControlState {
   addSwarmGroup: (group: SwarmGroup) => void;
   removeSwarmGroup: (groupId: string) => void;
   updateSwarmGroup: (groupId: string, patch: Partial<SwarmGroup>) => void;
-  setSwarmGroupStatus: (groupId: string, state: SwarmState, formationQuality?: number, maneuver?: string) => void;
+  setSwarmGroupStatus: (groupId: string, state: SwarmState, formationQuality?: number, maneuver?: string, maneuverProgress?: number) => void;
   setGeofenceDrawing: (enabled: boolean) => void;
   addGeofenceDrawPoint: (point: { lat: number; lon: number }) => void;
   clearGeofenceDrawPoints: () => void;
@@ -348,15 +349,22 @@ export const useGroundControlStore = create<GroundControlState>((set) => ({
       )
     })),
 
-  setSwarmGroupStatus: (groupId, state, formationQuality, maneuver) =>
+  setSwarmGroupStatus: (groupId, state, formationQuality, maneuver, maneuverProgress) =>
     set((s) => ({
       swarmGroups: s.swarmGroups.map((g) =>
         g.id === groupId
           ? {
               ...g,
               state,
-              formationQuality: formationQuality ?? g.formationQuality,
-              maneuver: maneuver !== undefined ? maneuver : g.maneuver
+              formationQuality: formationQuality ?? (state === "IDLE" ? 0 : g.formationQuality),
+              maneuver: state === "IDLE" || state === "DISBANDING"
+                ? undefined
+                : maneuver !== undefined
+                  ? maneuver
+                  : g.maneuver,
+              maneuverProgress: state === "IDLE" || state === "DISBANDING"
+                ? undefined
+                : maneuverProgress ?? g.maneuverProgress
             }
           : g
       )

@@ -114,6 +114,7 @@ export class MockDroneAdapter implements DroneAdapter {
           drone.manualControl = undefined;
           drone.manualTarget = undefined;
           drone.mission = undefined;
+          drone.pendingMissionCompletion = undefined;
         }
         break;
       }
@@ -134,6 +135,7 @@ export class MockDroneAdapter implements DroneAdapter {
           drone.manualControl = undefined;
           drone.mission = undefined;
           drone.manualTarget = undefined;
+          drone.pendingMissionCompletion = undefined;
         }
         break;
       }
@@ -144,6 +146,7 @@ export class MockDroneAdapter implements DroneAdapter {
           drone.manualControl = undefined;
           drone.mission = undefined;
           drone.manualTarget = undefined;
+          drone.pendingMissionCompletion = undefined;
         }
         break;
       }
@@ -159,6 +162,7 @@ export class MockDroneAdapter implements DroneAdapter {
         }
 
         drone.mission = undefined;
+        drone.pendingMissionCompletion = undefined;
         drone.manualTarget = undefined;
         drone.manualControl = {
           forward,
@@ -189,6 +193,7 @@ export class MockDroneAdapter implements DroneAdapter {
         // Manual input must immediately take over from mission autopilot.
         drone.manualControl = undefined;
         drone.mission = undefined;
+        drone.pendingMissionCompletion = undefined;
         drone.manualTarget = { lat, lon, alt: clamp(alt, 5, 500) };
 
         // Apply heading override if provided
@@ -266,6 +271,7 @@ export class MockDroneAdapter implements DroneAdapter {
 
     drone.manualControl = undefined;
     drone.manualTarget = undefined;
+    drone.pendingMissionCompletion = undefined;
     drone.mission = {
       id: missionId,
       name,

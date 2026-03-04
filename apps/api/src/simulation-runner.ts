@@ -639,6 +639,7 @@ async function bootstrapSimulation(): Promise<void> {
     const telemetryMap = new Map<string, {
       position: { lat: number; lon: number; alt: number };
       flightState: string;
+      mode?: string;
       vNorth?: number;
       vEast?: number;
       heading?: number;
@@ -647,6 +648,7 @@ async function bootstrapSimulation(): Promise<void> {
       const tel = packet.payload as {
         position?: { lat: number; lon: number; alt: number };
         flightState?: string;
+        mode?: string;
         velocity?: { north: number; east: number; up: number };
         heading?: number;
       };
@@ -654,6 +656,7 @@ async function bootstrapSimulation(): Promise<void> {
         telemetryMap.set(packet.droneId, {
           position: tel.position,
           flightState: tel.flightState,
+          mode: tel.mode,
           vNorth: tel.velocity?.north,
           vEast: tel.velocity?.east,
           heading: tel.heading
@@ -718,7 +721,19 @@ async function bootstrapSimulation(): Promise<void> {
 
       const reachedMatch = REACHED_WAYPOINT_REGEX.exec(alert.message);
       if (!reachedMatch) {
-        if (alert.message.toLowerCase().includes("mission complete")) {
+        const lowerMessage = alert.message.toLowerCase();
+        if (lowerMessage.includes("mission successful")) {
+          await prisma.mission.updateMany({
+            where: { id: triggerState.missionId },
+            data: { status: "completed" }
+          });
+          missionTriggerStateByDrone.delete(alert.droneId);
+        }
+        if (lowerMessage.includes("aborting mission")) {
+          await prisma.mission.updateMany({
+            where: { id: triggerState.missionId },
+            data: { status: "aborted" }
+          });
           missionTriggerStateByDrone.delete(alert.droneId);
         }
         continue;
@@ -794,6 +809,7 @@ async function bootstrapSimulation(): Promise<void> {
         if (!leaderTel) continue;
 
         const leaderState = leaderTel.flightState;
+        const leaderMode = (leaderTel.mode ?? "").toLowerCase();
 
         // If the leader is grounded, the mission/flight is over. Land followers and disband.
         if (leaderState === "grounded") {
@@ -818,7 +834,12 @@ async function bootstrapSimulation(): Promise<void> {
         };
 
         // If the leader is RTL or landing, terminate the swarm session and return followers home.
-        if (leaderState === "rtl" || leaderState === "landing") {
+        if (
+          leaderState === "rtl" ||
+          leaderState === "landing" ||
+          leaderMode.includes("rtl") ||
+          leaderMode.includes("mission-complete")
+        ) {
           resetGroupRuntime(group, "IDLE");
           for (const followerId of group.followerIds) {
             try {
@@ -998,6 +1019,11 @@ async function bootstrapSimulation(): Promise<void> {
           clearLeaderSwarmOverride(existing);
           activeSwarmGroups.delete(groupId);
         }
+        bus.publish(RedisChannels.swarmStatus, {
+          groupId,
+          state: "IDLE",
+          formationQuality: 0
+        }).catch(() => {});
         prisma.swarmGroup.update({
           where: { id: groupId },
           data: {

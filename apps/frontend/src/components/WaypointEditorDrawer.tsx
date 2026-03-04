@@ -9,6 +9,7 @@ import {
   stringParam,
   supportsPresetStopRule
 } from "../lib/swarmPresets";
+import { MAX_CUSTOM_DRONE_SPEED_MPH, MAX_MANEUVER_SPEED_MPH, mphToMps, mpsToMph } from "../lib/speedUnits";
 
 interface WaypointEditorDrawerProps {
   waypoint: MissionWaypoint;
@@ -149,6 +150,20 @@ export function WaypointEditorDrawer({
             />
             <div className="mt-1 text-[9px] text-cyan-100/35">degrees</div>
           </div>
+        </div>
+
+        <div className="rounded border border-cyan-300/15 bg-bg-900/55 px-2 py-1.5">
+          <div className="text-[8px] uppercase tracking-[0.12em] text-cyan-100/45">Turn Curve</div>
+          <input
+            type="number"
+            min={0}
+            max={250}
+            step={1}
+            className="input mt-1 text-[11px]"
+            value={Math.round(waypoint.curveSize ?? 0)}
+            onChange={(event) => onUpdate({ curveSize: Number(event.target.value) })}
+          />
+          <div className="mt-1 text-[9px] text-cyan-100/35">meters, `0` keeps a hard waypoint corner</div>
         </div>
 
         {/* Camera View Mode */}
@@ -443,16 +458,58 @@ export function WaypointEditorDrawer({
                       <div className="mb-1 text-[8px] uppercase tracking-[0.12em] text-cyan-100/45">Speed</div>
                       <input
                         type="number"
-                        min={1}
-                        max={20}
-                        step={0.5}
+                        min={5}
+                        max={MAX_MANEUVER_SPEED_MPH}
+                        step={1}
                         className="input text-[11px]"
-                        value={numericParam(waypoint.swarmTrigger?.maneuverOverrides, "speed", numericParam(selectedPreset?.maneuverParams, "speed", 6))}
+                        value={Math.round(mpsToMph(numericParam(waypoint.swarmTrigger?.maneuverOverrides, "speed", numericParam(selectedPreset?.maneuverParams, "speed", 6))))}
                         onChange={(event) =>
                           updateSwarmTrigger({
                             maneuverOverrides: {
                               ...(waypoint.swarmTrigger?.maneuverOverrides ?? {}),
-                              speed: Number(event.target.value)
+                              speed: mphToMps(Number(event.target.value))
+                            }
+                          })
+                        }
+                      />
+                    </div>
+                  </div>
+                ) : null}
+
+                {selectedManeuver === "fibonacci_orbit" ? (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <div className="mb-1 text-[8px] uppercase tracking-[0.12em] text-cyan-100/45">Max Radius</div>
+                      <input
+                        type="number"
+                        min={20}
+                        max={500}
+                        className="input text-[11px]"
+                        value={numericParam(waypoint.swarmTrigger?.maneuverOverrides, "maxRadius", numericParam(selectedPreset?.maneuverParams, "maxRadius", 110))}
+                        onChange={(event) =>
+                          updateSwarmTrigger({
+                            maneuverOverrides: {
+                              ...(waypoint.swarmTrigger?.maneuverOverrides ?? {}),
+                              maxRadius: Number(event.target.value)
+                            }
+                          })
+                        }
+                      />
+                    </div>
+                    <div>
+                      <div className="mb-1 text-[8px] uppercase tracking-[0.12em] text-cyan-100/45">Speed</div>
+                      <input
+                        type="number"
+                        min={5}
+                        max={MAX_MANEUVER_SPEED_MPH}
+                        step={1}
+                        className="input text-[11px]"
+                        value={Math.round(mpsToMph(numericParam(waypoint.swarmTrigger?.maneuverOverrides, "speed", numericParam(selectedPreset?.maneuverParams, "speed", 4))))}
+                        onChange={(event) =>
+                          updateSwarmTrigger({
+                            maneuverOverrides: {
+                              ...(waypoint.swarmTrigger?.maneuverOverrides ?? {}),
+                              speed: mphToMps(Number(event.target.value))
                             }
                           })
                         }
@@ -485,16 +542,16 @@ export function WaypointEditorDrawer({
                       <div className="mb-1 text-[8px] uppercase tracking-[0.12em] text-cyan-100/45">Speed</div>
                       <input
                         type="number"
-                        min={1}
-                        max={20}
-                        step={0.5}
+                        min={5}
+                        max={MAX_MANEUVER_SPEED_MPH}
+                        step={1}
                         className="input text-[11px]"
-                        value={numericParam(waypoint.swarmTrigger?.maneuverOverrides, "speed", numericParam(selectedPreset?.maneuverParams, "speed", 4))}
+                        value={Math.round(mpsToMph(numericParam(waypoint.swarmTrigger?.maneuverOverrides, "speed", numericParam(selectedPreset?.maneuverParams, "speed", 4))))}
                         onChange={(event) =>
                           updateSwarmTrigger({
                             maneuverOverrides: {
                               ...(waypoint.swarmTrigger?.maneuverOverrides ?? {}),
-                              speed: Number(event.target.value)
+                              speed: mphToMps(Number(event.target.value))
                             }
                           })
                         }
@@ -545,16 +602,16 @@ export function WaypointEditorDrawer({
                       <div className="mb-1 text-[8px] uppercase tracking-[0.12em] text-cyan-100/45">Speed</div>
                       <input
                         type="number"
-                        min={1}
-                        max={20}
-                        step={0.5}
+                        min={5}
+                        max={MAX_MANEUVER_SPEED_MPH}
+                        step={1}
                         className="input text-[11px]"
-                        value={numericParam(waypoint.swarmTrigger?.maneuverOverrides, "speed", numericParam(selectedPreset?.maneuverParams, "speed", 5))}
+                        value={Math.round(mpsToMph(numericParam(waypoint.swarmTrigger?.maneuverOverrides, "speed", numericParam(selectedPreset?.maneuverParams, "speed", 5))))}
                         onChange={(event) =>
                           updateSwarmTrigger({
                             maneuverOverrides: {
                               ...(waypoint.swarmTrigger?.maneuverOverrides ?? {}),
-                              speed: Number(event.target.value)
+                              speed: mphToMps(Number(event.target.value))
                             }
                           })
                         }
@@ -587,16 +644,76 @@ export function WaypointEditorDrawer({
                       <div className="mb-1 text-[8px] uppercase tracking-[0.12em] text-cyan-100/45">Speed</div>
                       <input
                         type="number"
-                        min={1}
-                        max={20}
-                        step={0.5}
+                        min={5}
+                        max={MAX_MANEUVER_SPEED_MPH}
+                        step={1}
                         className="input text-[11px]"
-                        value={numericParam(waypoint.swarmTrigger?.maneuverOverrides, "speed", numericParam(selectedPreset?.maneuverParams, "speed", 5))}
+                        value={Math.round(mpsToMph(numericParam(waypoint.swarmTrigger?.maneuverOverrides, "speed", numericParam(selectedPreset?.maneuverParams, "speed", 5))))}
                         onChange={(event) =>
                           updateSwarmTrigger({
                             maneuverOverrides: {
                               ...(waypoint.swarmTrigger?.maneuverOverrides ?? {}),
-                              speed: Number(event.target.value)
+                              speed: mphToMps(Number(event.target.value))
+                            }
+                          })
+                        }
+                      />
+                    </div>
+                  </div>
+                ) : null}
+
+                {selectedManeuver === "search_expanding_square" ? (
+                  <div className="grid grid-cols-3 gap-2">
+                    <div>
+                      <div className="mb-1 text-[8px] uppercase tracking-[0.12em] text-cyan-100/45">Max Radius</div>
+                      <input
+                        type="number"
+                        min={50}
+                        max={2000}
+                        className="input text-[11px]"
+                        value={numericParam(waypoint.swarmTrigger?.maneuverOverrides, "maxRadius", numericParam(selectedPreset?.maneuverParams, "maxRadius", 420))}
+                        onChange={(event) =>
+                          updateSwarmTrigger({
+                            maneuverOverrides: {
+                              ...(waypoint.swarmTrigger?.maneuverOverrides ?? {}),
+                              maxRadius: Number(event.target.value)
+                            }
+                          })
+                        }
+                      />
+                    </div>
+                    <div>
+                      <div className="mb-1 text-[8px] uppercase tracking-[0.12em] text-cyan-100/45">Leg Step</div>
+                      <input
+                        type="number"
+                        min={20}
+                        max={500}
+                        className="input text-[11px]"
+                        value={numericParam(waypoint.swarmTrigger?.maneuverOverrides, "legSpacing", numericParam(selectedPreset?.maneuverParams, "legSpacing", 90))}
+                        onChange={(event) =>
+                          updateSwarmTrigger({
+                            maneuverOverrides: {
+                              ...(waypoint.swarmTrigger?.maneuverOverrides ?? {}),
+                              legSpacing: Number(event.target.value)
+                            }
+                          })
+                        }
+                      />
+                    </div>
+                    <div>
+                      <div className="mb-1 text-[8px] uppercase tracking-[0.12em] text-cyan-100/45">Speed</div>
+                      <input
+                        type="number"
+                        min={5}
+                        max={MAX_MANEUVER_SPEED_MPH}
+                        step={1}
+                        className="input text-[11px]"
+                        value={Math.round(mpsToMph(numericParam(waypoint.swarmTrigger?.maneuverOverrides, "speed", numericParam(selectedPreset?.maneuverParams, "speed", 5))))}
+                        onChange={(event) =>
+                          updateSwarmTrigger({
+                            maneuverOverrides: {
+                              ...(waypoint.swarmTrigger?.maneuverOverrides ?? {}),
+                              speed: mphToMps(Number(event.target.value))
                             }
                           })
                         }
@@ -754,31 +871,19 @@ export function WaypointEditorDrawer({
                 />
               </div>
               <div className="rounded border border-cyan-300/15 bg-bg-900/55 px-2 py-1.5">
-                <div className="text-[8px] uppercase tracking-[0.12em] text-cyan-100/45">Speed (m/s)</div>
+                <div className="text-[8px] uppercase tracking-[0.12em] text-cyan-100/45">Speed (mph)</div>
                 <input
                   type="number"
                   min={0}
-                  max={15}
-                  step={0.5}
+                  max={MAX_CUSTOM_DRONE_SPEED_MPH}
+                  step={1}
                   className="input mt-1 text-[11px]"
-                  value={waypoint.speed ?? 0}
-                  onChange={(event) => onUpdate({ speed: Number(event.target.value) })}
+                  value={Math.round(mpsToMph(waypoint.speed ?? 0))}
+                  onChange={(event) => onUpdate({ speed: mphToMps(Number(event.target.value)) })}
                 />
               </div>
             </div>
             <div className="grid grid-cols-2 gap-2">
-              <div className="rounded border border-cyan-300/15 bg-bg-900/55 px-2 py-1.5">
-                <div className="text-[8px] uppercase tracking-[0.12em] text-cyan-100/45">Curve Size (m)</div>
-                <input
-                  type="number"
-                  min={0}
-                  max={100}
-                  step={0.1}
-                  className="input mt-1 text-[11px]"
-                  value={waypoint.curveSize ?? 0.2}
-                  onChange={(event) => onUpdate({ curveSize: Number(event.target.value) })}
-                />
-              </div>
               <div className="rounded border border-cyan-300/15 bg-bg-900/55 px-2 py-1.5">
                 <div className="text-[8px] uppercase tracking-[0.12em] text-cyan-100/45">Alt Mode</div>
                 <select

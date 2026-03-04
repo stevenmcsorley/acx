@@ -1,4 +1,5 @@
 import type { AlertEvent, DroneTelemetry } from "../types/domain";
+import { formatSpeedMph } from "../lib/speedUnits";
 
 interface TelemetryPanelProps {
   selectedDroneId: string | null;
@@ -28,7 +29,7 @@ export function TelemetryPanel({ selectedDroneId, telemetryByDrone, alerts }: Te
         </div>
         <div className="metric-card">
           <div className="text-[9px] uppercase text-cyan-100/50">Velocity</div>
-          <strong>{telemetry ? `${telemetry.velocity.speed.toFixed(1)} m/s` : "--"}</strong>
+          <strong>{telemetry ? formatSpeedMph(telemetry.velocity.speed, 1) : "--"}</strong>
         </div>
         <div className="metric-card">
           <div className="text-[9px] uppercase text-cyan-100/50">Heading</div>
@@ -44,7 +45,7 @@ export function TelemetryPanel({ selectedDroneId, telemetryByDrone, alerts }: Te
             <div className="text-cyan-100/50">Mode</div>
             <div className="text-white">{telemetry?.mode ?? "--"}</div>
             <div className="text-cyan-100/50">Wind</div>
-            <div className="text-white">{telemetry ? `${telemetry.wind.speed.toFixed(1)} m/s` : "--"}</div>
+            <div className="text-white">{telemetry ? formatSpeedMph(telemetry.wind.speed, 1) : "--"}</div>
             <div className="text-cyan-100/50">Collision</div>
             <div className={telemetry?.collisionFlag ? "text-accent-red" : "text-white"}>
               {telemetry?.collisionFlag ? "DETECTED" : "Clear"}

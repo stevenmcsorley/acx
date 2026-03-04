@@ -67,6 +67,8 @@ export class DroneEntityManager {
           uri: this.droneModelUri,
           scale: 0.65,
           minimumPixelSize: 52,
+          runAnimations: true,
+          clampAnimations: false,
           silhouetteColor: Color.CYAN,
           silhouetteSize: 0.6,
           colorBlendMode: ColorBlendMode.MIX

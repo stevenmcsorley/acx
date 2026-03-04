@@ -37,7 +37,7 @@ export function RecordingOverlay({
   };
 
   return (
-    <div data-recording-ignore className="absolute right-14 top-[190px] z-30 flex flex-col items-end gap-1.5">
+    <div data-recording-ignore className="absolute right-14 top-[252px] z-30 flex flex-col items-end gap-1.5">
       {/* Start recording controls */}
       <div className="flex items-center gap-1.5 rounded border border-cyan-300/15 bg-bg-900/85 px-2 py-1.5 backdrop-blur-sm">
         <select

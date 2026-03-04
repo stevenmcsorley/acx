@@ -15,6 +15,24 @@ body {
   color: #d9f2ff;
 }
 
+/* enlarge the very small utility text to improve readability */
+.text-\[7px\],
+.text-\[8px\],
+.text-\[9px\],
+.text-\[10px\] {
+  font-size: 11px !important;
+  letter-spacing: 0.12em;
+}
+
+.panel-title,
+.panel-subtitle,
+.metric-card,
+.btn-primary,
+.btn-secondary,
+.btn-danger {
+  font-size: 0.9rem;
+}
+
 .font-display {
   font-family: "Orbitron", sans-serif;
 }

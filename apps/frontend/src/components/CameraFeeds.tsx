@@ -1,5 +1,6 @@
 import type { DroneRecord, DroneTelemetry } from "../types/domain";
 import { useGroundControlStore } from "../store/useGroundControlStore";
+import { formatSpeedMph } from "../lib/speedUnits";
 
 interface CameraFeedsProps {
   drones: DroneRecord[];
@@ -65,30 +66,30 @@ export function CameraFeeds({ drones, telemetryByDrone, selectedDroneId }: Camer
 	                  <div className="absolute right-1.5 top-1.5 rounded border border-cyan-300/15 bg-bg-950/80 px-1.5 py-0.5 text-[8px] uppercase tracking-[0.1em] text-accent-green">
 	                    {tel ? "Live" : "Idle"}
 	                  </div>
-	                  <div className="absolute bottom-1.5 left-1.5 right-1.5 rounded border border-cyan-300/15 bg-bg-950/82 px-1.5 py-1">
-	                    <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[8px] uppercase tracking-[0.08em] text-cyan-100/48">
-	                      <span>
+	                  <div className="absolute bottom-1.5 left-1.5 right-1.5 rounded border border-cyan-300/15 bg-bg-950/82 px-2 py-1.5">
+	                    <div className="grid grid-cols-2 gap-x-2.5 gap-y-1 text-[7px] uppercase tracking-[0.08em] text-cyan-100/48">
+	                      <span className="whitespace-nowrap">
 	                        Bat{" "}
-	                        <strong className="font-semibold text-cyan-100/85">
+	                        <strong className="whitespace-nowrap font-semibold text-cyan-100/85">
 	                          {tel ? `${Math.round(tel.batteryPct)}%` : "--"}
 	                        </strong>
 	                      </span>
-	                      <span>
+	                      <span className="whitespace-nowrap">
 	                        Sig{" "}
-	                        <strong className="font-semibold text-cyan-100/85">
+	                        <strong className="whitespace-nowrap font-semibold text-cyan-100/85">
 	                          {tel ? `${Math.round(tel.signalPct)}%` : "--"}
 	                        </strong>
 	                      </span>
-	                      <span>
+	                      <span className="whitespace-nowrap">
 	                        Alt{" "}
-	                        <strong className="font-semibold text-cyan-100/85">
+	                        <strong className="whitespace-nowrap font-semibold text-cyan-100/85">
 	                          {tel ? `${Math.round(visualAltitude ?? tel.position.alt)}m` : "--"}
 	                        </strong>
 	                      </span>
-	                      <span>
+	                      <span className="whitespace-nowrap">
 	                        Spd{" "}
-	                        <strong className="font-semibold text-cyan-100/85">
-	                          {tel ? `${Math.round(tel.velocity.speed)}m/s` : "--"}
+	                        <strong className="whitespace-nowrap font-semibold text-cyan-100/85">
+	                          {tel ? formatSpeedMph(tel.velocity.speed, 0) : "--"}
 	                        </strong>
 	                      </span>
 	                    </div>

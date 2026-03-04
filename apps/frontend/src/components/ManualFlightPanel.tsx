@@ -1,4 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  MAX_CUSTOM_DRONE_SPEED_MPH,
+  MAX_VERTICAL_RATE_MPH,
+  mphToMps,
+  mpsToMph
+} from "../lib/speedUnits";
 
 interface ManualFlightPanelProps {
   selectedDroneId: string | null;
@@ -221,13 +227,14 @@ export function ManualFlightPanel({
           <div className="flex items-center gap-2">
             <input
               type="range"
-              min={1}
-              max={20}
-              value={speedLimit}
-              onChange={(event) => setSpeedLimit(Number(event.target.value))}
+              min={5}
+              max={MAX_CUSTOM_DRONE_SPEED_MPH}
+              step={1}
+              value={Math.round(mpsToMph(speedLimit))}
+              onChange={(event) => setSpeedLimit(mphToMps(Number(event.target.value)))}
               className="h-1 flex-1 cursor-pointer appearance-none rounded-full bg-cyan-300/20 accent-accent-amber"
             />
-            <span className="w-14 text-right font-mono text-[11px] text-white">{speedLimit} m/s</span>
+            <span className="w-16 text-right font-mono text-[11px] text-white">{Math.round(mpsToMph(speedLimit))} mph</span>
           </div>
         </div>
 
@@ -236,13 +243,14 @@ export function ManualFlightPanel({
           <div className="flex items-center gap-2">
             <input
               type="range"
-              min={1}
-              max={8}
-              value={verticalRate}
-              onChange={(event) => setVerticalRate(Number(event.target.value))}
+              min={2}
+              max={MAX_VERTICAL_RATE_MPH}
+              step={1}
+              value={Math.round(mpsToMph(verticalRate))}
+              onChange={(event) => setVerticalRate(mphToMps(Number(event.target.value)))}
               className="h-1 flex-1 cursor-pointer appearance-none rounded-full bg-cyan-300/20 accent-accent-cyan"
             />
-            <span className="w-14 text-right font-mono text-[11px] text-white">{verticalRate} m/s</span>
+            <span className="w-16 text-right font-mono text-[11px] text-white">{Math.round(mpsToMph(verticalRate))} mph</span>
           </div>
         </div>
 

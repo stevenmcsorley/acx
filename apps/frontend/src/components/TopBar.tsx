@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import clsx from "clsx";
 import type { UserInfo } from "../types/domain";
 
-export type NavTab = "fleet" | "swarm" | "mission" | "intel" | "records" | "settings";
+export type NavTab = "fleet" | "swarm" | "mission" | "missions" | "intel" | "records" | "settings";
 
 interface TopBarProps {
   user: UserInfo;
@@ -20,6 +20,7 @@ const NAV_TABS: Array<{ id: NavTab; label: string }> = [
   { id: "fleet", label: "Fleet" },
   { id: "swarm", label: "Swarm Mgr" },
   { id: "mission", label: "Mission Planner" },
+  { id: "missions", label: "Mission Library" },
   { id: "intel", label: "Intel" },
   { id: "records", label: "Records" },
   { id: "settings", label: "Settings" }
