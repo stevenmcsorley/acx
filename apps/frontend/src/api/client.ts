@@ -196,8 +196,9 @@ export class ApiClient {
     return parseResponse(response);
   }
 
-  async deleteMission(missionId: string): Promise<{ deleted: boolean; missionId: string }> {
-    const response = await fetch(`${this.baseUrl}/api/missions/${missionId}`, {
+  async deleteMission(missionId: string, force = true): Promise<{ deleted: boolean; missionId: string }> {
+    const query = force ? "?force=true" : "";
+    const response = await fetch(`${this.baseUrl}/api/missions/${missionId}${query}`, {
       method: "DELETE",
       headers: buildHeaders(this.token)
     });

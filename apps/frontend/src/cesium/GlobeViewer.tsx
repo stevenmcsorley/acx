@@ -477,28 +477,10 @@ export function GlobeViewer({
   const latestMissionForSelectedDrone = useMemo(() => {
     return getPreferredMissionForDrone(missions, selectedDroneId) ?? null;
   }, [missions, selectedDroneId]);
-  const lastActiveMissionWaypointIndexRef = useRef<number>(-1);
-  useEffect(() => {
-    if (suppressLiveMissionGhostPreview) {
-      lastActiveMissionWaypointIndexRef.current = -1;
-      return;
-    }
-    if (liveMissionWaypointIndex >= 0) {
-      lastActiveMissionWaypointIndexRef.current = liveMissionWaypointIndex;
-      return;
-    }
-    if (latestMissionForSelectedDrone?.status !== "executing") {
-      lastActiveMissionWaypointIndexRef.current = -1;
-    }
-  }, [liveMissionWaypointIndex, latestMissionForSelectedDrone?.status, selectedDroneId, suppressLiveMissionGhostPreview]);
   const activeMissionWaypointIndex =
-    suppressLiveMissionGhostPreview
+    suppressLiveMissionGhostPreview || liveMissionWaypointIndex < 0
       ? -1
-      : liveMissionWaypointIndex >= 0
-      ? liveMissionWaypointIndex
-      : latestMissionForSelectedDrone?.status === "executing"
-        ? lastActiveMissionWaypointIndexRef.current
-        : -1;
+      : liveMissionWaypointIndex;
   const plannerEnabledRef = useRef(plannerEnabled);
   const areaDrawingModeRef = useRef<"geofence" | "homeBase" | null>(areaDrawingMode);
   const dronesByIdRef = useRef(dronesById);
@@ -1580,7 +1562,7 @@ export function GlobeViewer({
     const previewWaypoints =
       plannerWaypoints.length > 0
         ? plannerWaypoints
-        : activeMissionWaypointIndex >= 0 && latestMissionForSelectedDrone
+        : latestMissionForSelectedDrone
           ? latestMissionForSelectedDrone.waypoints
           : [];
     const previewSelectedIndex =

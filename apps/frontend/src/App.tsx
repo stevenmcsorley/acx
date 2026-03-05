@@ -23,7 +23,7 @@ import { WaypointEditorDrawer } from "./components/WaypointEditorDrawer";
 import type { HomeBaseRecord, ScenarioPreset } from "./types/domain";
 import { useFlightRecorder } from "./hooks/useFlightRecorder";
 import { useVideoRecorder } from "./hooks/useVideoRecorder";
-import { getPreferredMissionForDrone } from "./lib/missionSelection";
+import { getLatestSavedMissionForDrone, getPreferredMissionForDrone } from "./lib/missionSelection";
 import { useGroundControlStore } from "./store/useGroundControlStore";
 import { useTelemetrySocket } from "./websocket/useTelemetrySocket";
 
@@ -170,6 +170,7 @@ export default function App(): JSX.Element {
   const [swarmPresets, setSwarmPresets] = useState<ScenarioPreset[]>([]);
   const [fpvPitchDeg, setFpvPitchDeg] = useState(0);
   const [editingMissionId, setEditingMissionId] = useState<string | null>(null);
+  const [plannerExecuteMissionId, setPlannerExecuteMissionId] = useState<string | null>(null);
   const [selectedMissionLibraryId, setSelectedMissionLibraryId] = useState<string | null>(null);
   const [plannerFocusToken, setPlannerFocusToken] = useState(0);
   const [homeBases, setHomeBases] = useState<HomeBaseRecord[]>([]);
@@ -207,6 +208,23 @@ export default function App(): JSX.Element {
   const latestMissionForSelectedDrone = useMemo(() => {
     return getPreferredMissionForDrone(missions, selectedDroneId);
   }, [missions, selectedDroneId]);
+  const latestSavedMissionForSelectedDrone = useMemo(() => {
+    return getLatestSavedMissionForDrone(missions, selectedDroneId);
+  }, [missions, selectedDroneId]);
+  const plannerExecuteMission = useMemo(() => {
+    if (!selectedDroneId) {
+      return null;
+    }
+
+    if (plannerExecuteMissionId) {
+      const explicitlySelected = missions.find((mission) => mission.id === plannerExecuteMissionId);
+      if (explicitlySelected?.droneId === selectedDroneId) {
+        return explicitlySelected;
+      }
+    }
+
+    return latestSavedMissionForSelectedDrone ?? null;
+  }, [latestSavedMissionForSelectedDrone, missions, plannerExecuteMissionId, selectedDroneId]);
 
   const selectedPlannerWaypoint =
     selectedPlannerWaypointIndex !== null ? plannerWaypoints[selectedPlannerWaypointIndex] : undefined;
@@ -766,21 +784,26 @@ export default function App(): JSX.Element {
       return;
     }
     run(async () => {
+      setMissionOutcome(null);
       const missionName = plannerMissionName || `Mission-${new Date().toISOString()}`;
       const waypointCount = plannerWaypoints.length;
+      let savedMissionId = "";
       if (editingMissionId) {
-        await api.updateMission(editingMissionId, {
+        const result = await api.updateMission(editingMissionId, {
           droneId: selectedDroneId,
           name: missionName,
           waypoints: plannerWaypoints
         });
+        savedMissionId = result.mission.id;
       } else {
-        await api.createMission({
+        const result = await api.createMission({
           droneId: selectedDroneId,
           name: missionName,
           waypoints: plannerWaypoints
         });
+        savedMissionId = result.mission.id;
       }
+      setPlannerExecuteMissionId(savedMissionId);
       setEditingMissionId(null);
       setPlannerMissionName("");
       setSelectedPlannerWaypointIndex(null);
@@ -792,17 +815,17 @@ export default function App(): JSX.Element {
   }, [api, clearPlannerWaypoints, editingMissionId, plannerMissionName, plannerWaypoints, refresh, selectedDroneId, setPlannerEnabled, setPlannerMissionName]);
 
   const handleMissionExecute = useCallback(() => {
-    if (!selectedDroneId || !latestMissionForSelectedDrone) {
+    if (!selectedDroneId || !plannerExecuteMission) {
       setStatus("No uploaded mission found for selected drone");
       return;
     }
     run(async () => {
       setMissionOutcome(null);
-      await api.executeMission(latestMissionForSelectedDrone.id);
+      await api.executeMission(plannerExecuteMission.id);
       await refresh();
-      setStatus(`Mission execution started: ${latestMissionForSelectedDrone.name}`);
+      setStatus(`Mission execution started: ${plannerExecuteMission.name}`);
     }).catch(() => {});
-  }, [api, latestMissionForSelectedDrone, refresh, selectedDroneId]);
+  }, [api, plannerExecuteMission, refresh, selectedDroneId]);
 
   const handleLoadMissionIntoPlanner = useCallback((missionId: string) => {
     const mission = missions.find((candidate) => candidate.id === missionId);
@@ -817,8 +840,10 @@ export default function App(): JSX.Element {
     setPlannerWaypoints(mission.waypoints);
     setSelectedPlannerWaypointIndex(mission.waypoints.length > 0 ? 0 : null);
     setPlannerEnabled(false);
+    setMissionOutcome(null);
     setMissionRailOpen("mission");
     setActiveTab("mission");
+    setPlannerExecuteMissionId(mission.id);
     setPlannerFocusToken((value) => value + 1);
     setStatus(`Loaded mission "${mission.name}" into planner`);
   }, [missions, setActiveTab, setPlannerEnabled, setPlannerMissionName, setPlannerWaypoints, setSelectedDrone]);
@@ -837,6 +862,9 @@ export default function App(): JSX.Element {
       if (selectedMissionLibraryId === missionId) {
         setSelectedMissionLibraryId(null);
       }
+      if (plannerExecuteMissionId === missionId) {
+        setPlannerExecuteMissionId(null);
+      }
       if (editingMissionId === missionId) {
         setEditingMissionId(null);
         setPlannerMissionName("");
@@ -844,7 +872,7 @@ export default function App(): JSX.Element {
       await refresh();
       setStatus(`Mission "${mission.name}" deleted`);
     }).catch(() => {});
-  }, [api, editingMissionId, missions, refresh, selectedMissionLibraryId, setPlannerMissionName]);
+  }, [api, editingMissionId, missions, plannerExecuteMissionId, refresh, selectedMissionLibraryId, setPlannerMissionName]);
 
   const handleExecuteMissionById = useCallback((missionId: string) => {
     const mission = missions.find((candidate) => candidate.id === missionId);
@@ -855,6 +883,7 @@ export default function App(): JSX.Element {
     run(async () => {
       setMissionOutcome(null);
       await api.executeMission(missionId);
+      setPlannerExecuteMissionId(missionId);
       await refresh();
       setStatus(`Mission execution started: ${mission.name}`);
     }).catch(() => {});
@@ -866,6 +895,7 @@ export default function App(): JSX.Element {
     setPlannerWaypoints([]);
     setSelectedPlannerWaypointIndex(null);
     setPlannerEnabled(true);
+    setMissionOutcome(null);
     setMissionRailOpen("mission");
     setActiveTab("mission");
   }, [setActiveTab, setPlannerEnabled, setPlannerMissionName, setPlannerWaypoints]);
@@ -1277,10 +1307,10 @@ export default function App(): JSX.Element {
                   swarmGroups={swarmGroups}
                   swarmPresets={swarmPresets}
                   ghostPreviewOptions={ghostPreviewOptions}
-                  selectedMissionName={latestMissionForSelectedDrone?.name}
+                  selectedMissionName={plannerExecuteMission?.name}
                   editingMissionName={editingMission?.name ?? null}
                   selectedWaypointIndex={selectedPlannerWaypointIndex}
-                  canExecuteMission={Boolean(selectedDroneId && latestMissionForSelectedDrone)}
+                  canExecuteMission={Boolean(selectedDroneId && plannerExecuteMission)}
                   missionOutcome={missionOutcome}
                   missionName={plannerMissionName}
                   onMissionNameChange={setPlannerMissionName}

@@ -77,6 +77,7 @@ export class PhysicsEngine {
       const target = this.resolveTarget(drone);
       if (target) {
       const isManualNav = drone.mode === "manual-nav" && !drone.mission;
+      const isMissionTransit = Boolean(drone.mission && !drone.manualTarget);
       const turnRateLimitDeg = isManualNav ? this.maxTurnRateDeg * 2.2 : this.maxTurnRateDeg;
       const accelLimit = isManualNav ? this.maxAccel * 1.35 : this.maxAccel;
       const bearing = bearingDeg(drone.lat, drone.lon, target.lat, target.lon);
@@ -84,10 +85,20 @@ export class PhysicsEngine {
       // Velocity: navigate toward target along bearing (independent of heading)
       const relative = localMetersFromLatLon(drone.lat, drone.lon, target.lat, target.lon);
       const horizontalDistance = vectorMagnitude(relative.north, relative.east);
-      const speedCap = target.speed && target.speed > 0
-        ? Math.min(target.speed, this.maxSpeed)
-        : this.maxSpeed;
-      const desiredSpeed = clamp(horizontalDistance * (isManualNav ? 0.55 : 0.35), 0, speedCap);
+      const speedCap = isMissionTransit
+        ? this.maxSpeed
+        : target.speed && target.speed > 0
+          ? Math.min(target.speed, this.maxSpeed)
+          : this.maxSpeed;
+      const desiredSpeed = isMissionTransit
+        ? (() => {
+            const slowdownDistance = clamp(speedCap * 3, 20, 120);
+            if (horizontalDistance >= slowdownDistance) {
+              return speedCap;
+            }
+            return clamp(speedCap * (horizontalDistance / slowdownDistance), 2, speedCap);
+          })()
+        : clamp(horizontalDistance * (isManualNav ? 0.55 : 0.35), 0, speedCap);
       const bearingRad = (bearing * Math.PI) / 180;
       const desiredNorth = Math.cos(bearingRad) * desiredSpeed;
       const desiredEast = Math.sin(bearingRad) * desiredSpeed;
@@ -96,14 +107,18 @@ export class PhysicsEngine {
       drone.vEast = this.approachValue(drone.vEast, desiredEast, accelLimit * dtSeconds);
 
       // Heading: resolve independently from velocity bearing
-      const desiredHeading = this.resolveDesiredHeading(drone, bearing);
+      const desiredHeading = isMissionTransit ? bearing : this.resolveDesiredHeading(drone, bearing);
       const headingDelta = shortestTurnDegrees(drone.heading, desiredHeading);
       const headingStep = clamp(headingDelta, -turnRateLimitDeg * dtSeconds, turnRateLimitDeg * dtSeconds);
       drone.heading = (drone.heading + headingStep + 360) % 360;
 
       const altDiff = target.alt - drone.alt;
-      const desiredVUp = clamp(altDiff * 0.8, -this.maxDescentRate, this.maxClimbRate);
-      drone.vUp = this.approachValue(drone.vUp, desiredVUp, accelLimit * dtSeconds);
+      const altitudeDeadband = 0.6;
+      const desiredVUp = Math.abs(altDiff) <= altitudeDeadband
+        ? 0
+        : clamp((altDiff * 0.45) - (drone.vUp * 0.35), -this.maxDescentRate, this.maxClimbRate);
+      const verticalAccelLimit = accelLimit * 0.6;
+      drone.vUp = this.approachValue(drone.vUp, desiredVUp, verticalAccelLimit * dtSeconds);
       } else {
         drone.vNorth = this.approachValue(drone.vNorth, 0, this.maxAccel * dtSeconds);
         drone.vEast = this.approachValue(drone.vEast, 0, this.maxAccel * dtSeconds);
@@ -116,7 +131,7 @@ export class PhysicsEngine {
 
     // Reduce wind influence during manual stick control for tighter feel.
     const windFactor = manualControl ? 0.04 : 0.15;
-    const windVertFactor = manualControl ? 0.01 : 0.05;
+    const windVertFactor = manualControl ? 0.005 : 0.02;
     drone.vNorth += drone.wind.y * windFactor;
     drone.vEast += drone.wind.x * windFactor;
     drone.vUp += drone.wind.z * windVertFactor;

@@ -244,6 +244,8 @@ export class MockDroneAdapter implements DroneAdapter {
       }
       case "clearSwarmTarget": {
         drone.manualTarget = undefined;
+        drone.targetHeading = undefined;
+        drone.headingMode = "velocity";
         if (drone.mission) {
           drone.mode = `mission-wp-${drone.mission.index + 1}/${drone.mission.waypoints.length}`;
         } else if (drone.flightState === "airborne") {
@@ -271,6 +273,8 @@ export class MockDroneAdapter implements DroneAdapter {
 
     drone.manualControl = undefined;
     drone.manualTarget = undefined;
+    drone.targetHeading = undefined;
+    drone.headingMode = "velocity";
     drone.pendingMissionCompletion = undefined;
     drone.mission = {
       id: missionId,

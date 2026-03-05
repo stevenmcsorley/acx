@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { MissionWaypoint, CameraViewMode, DroneTelemetry, MissionRecord, ScenarioPreset } from "../types/domain";
 import type { SwarmGroup } from "../store/useGroundControlStore";
 import type { WaypointDefaults } from "../store/useGroundControlStore";
@@ -247,22 +247,8 @@ export function MissionPlannerPanel({
     selectedTelemetryModeLower.includes("rtl") ||
     selectedTelemetryModeLower.includes("route-complete") ||
     selectedTelemetryModeLower.includes("mission-complete") ||
-    selectedTelemetryModeLower.includes("landing") ||
-    latestMission?.status === "completed" ||
-    latestMission?.status === "aborted";
-  const lastMissionProgressRef = useRef<{ index: number; total: number } | null>(null);
-  useEffect(() => {
-    if (liveMissionProgress) {
-      lastMissionProgressRef.current = liveMissionProgress;
-      return;
-    }
-    if (latestMission?.status !== "executing") {
-      lastMissionProgressRef.current = null;
-    }
-  }, [liveMissionProgress, latestMission?.status, selectedDroneId]);
-  const missionProgress =
-    liveMissionProgress ??
-    (latestMission?.status === "executing" ? lastMissionProgressRef.current : null);
+    selectedTelemetryModeLower.includes("landing");
+  const missionProgress = liveMissionProgress;
   const activeSwarmGroup = useMemo(
     () =>
       selectedDroneId
@@ -680,7 +666,7 @@ export function MissionPlannerPanel({
             <>
           <div className="mb-2 flex items-center justify-between gap-2">
             <div className="text-[8px] uppercase tracking-[0.1em] text-cyan-100/38">
-              {latestMission?.status === "executing" ? "Executing" : "Planner / Draft"}
+              {missionProgress ? "Live Mission" : "Planner / Draft"}
             </div>
             <label className="flex items-center gap-1.5 text-[9px] uppercase tracking-[0.1em] text-cyan-100/45">
               <input
@@ -761,46 +747,6 @@ export function MissionPlannerPanel({
                 {formatMeters(displayToNextMeters)}
               </div>
             </div>
-            <div className="rounded border border-cyan-300/15 bg-bg-900/55 px-2 py-1.5">
-              <div className="text-[8px] uppercase tracking-[0.12em] text-cyan-100/45">Swarm</div>
-              <div className="mt-0.5 text-[12px] font-semibold text-cyan-100">
-                {visibleSwarmGroup ? `${visibleSwarmGroup.name} · ${visibleSwarmGroup.state.replaceAll("_", " ")}` : "No active swarm"}
-              </div>
-            </div>
-            <div className="rounded border border-cyan-300/15 bg-bg-900/55 px-2 py-1.5">
-              <div className="text-[8px] uppercase tracking-[0.12em] text-cyan-100/45">Maneuver</div>
-              <div className="mt-0.5 text-[12px] font-semibold text-cyan-100">
-                {visibleSwarmGroup ? humanizeManeuver(visibleSwarmGroup.maneuver) : "--"}
-              </div>
-            </div>
-          </div>
-          <div className="mt-2 space-y-1.5">
-            <div>
-              <div className="mb-1 flex items-center justify-between text-[8px] uppercase tracking-[0.12em] text-cyan-100/45">
-                <span>Mission Progress</span>
-                <span>{Math.round(displayMissionCompletionPct)}%</span>
-              </div>
-              <div className="h-2 overflow-hidden rounded-full border border-cyan-300/12 bg-bg-900/70">
-                <div
-                  className="h-full rounded-full bg-gradient-to-r from-accent-cyan/70 to-accent-green/70 transition-all duration-500"
-                  style={{ width: `${displayMissionCompletionPct}%` }}
-                />
-              </div>
-            </div>
-            {visibleSwarmGroup?.state === "MANEUVERING" && typeof visibleSwarmGroup.maneuverProgress === "number" ? (
-              <div>
-                <div className="mb-1 flex items-center justify-between text-[8px] uppercase tracking-[0.12em] text-cyan-100/45">
-                  <span>Maneuver Progress</span>
-                  <span>{Math.round(visibleSwarmGroup.maneuverProgress * 100)}%</span>
-                </div>
-                <div className="h-2 overflow-hidden rounded-full border border-cyan-300/12 bg-bg-900/70">
-                  <div
-                    className="h-full rounded-full bg-gradient-to-r from-accent-amber/70 to-accent-cyan/70 transition-all duration-500"
-                    style={{ width: `${Math.round(visibleSwarmGroup.maneuverProgress * 100)}%` }}
-                  />
-                </div>
-              </div>
-            ) : null}
           </div>
           <div className="mt-2 rounded border border-cyan-300/12 bg-bg-900/55 px-2 py-1.5 text-[10px] text-cyan-100/62">
             {visibleSwarmGroup?.state === "MANEUVERING" ? (

@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import type { MissionWaypoint } from "@sgcx/shared-types";
-import { UserRole } from "@prisma/client";
+import { FlightState, UserRole } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../db/prisma";
 import { requireAuth, requireRoles } from "../auth/rbac";
@@ -103,6 +103,26 @@ const missionSchema = z.object({
 });
 
 const missionPlanner = new MissionPlanner();
+const EXECUTION_TELEMETRY_STALE_MS = 30_000;
+
+function isMissionExecutionLikelyActive(drone: {
+  status: FlightState;
+  lastTelemetryAt: Date | null;
+} | null): boolean {
+  if (!drone) {
+    return false;
+  }
+
+  if (drone.status === FlightState.GROUNDED) {
+    return false;
+  }
+
+  if (!drone.lastTelemetryAt) {
+    return false;
+  }
+
+  return Date.now() - drone.lastTelemetryAt.getTime() <= EXECUTION_TELEMETRY_STALE_MS;
+}
 
 type StoredMissionWithWaypoints = {
   id: string;
@@ -411,14 +431,26 @@ export async function missionRoutes(server: FastifyInstance, bus: TelemetryBus):
     { preHandler: [requireAuth, requireRoles(UserRole.ADMIN, UserRole.OPERATOR)] },
     async (request, reply) => {
       const missionId = z.string().min(1).parse((request.params as { id: string }).id);
+      const { force } = z
+        .object({
+          force: z.coerce.boolean().optional().default(false)
+        })
+        .parse(request.query ?? {});
       const mission = await prisma.mission.findUnique({ where: { id: missionId } });
       if (!mission) {
         reply.status(404).send({ message: `Mission ${missionId} not found` });
         return;
       }
       if (mission.status === "executing") {
-        reply.status(409).send({ message: "Cannot delete a mission while it is executing" });
-        return;
+        const drone = await prisma.drone.findUnique({
+          where: { id: mission.droneId },
+          select: { status: true, lastTelemetryAt: true }
+        });
+
+        if (isMissionExecutionLikelyActive(drone) && !force) {
+          reply.status(409).send({ message: "Cannot delete a mission while it is executing" });
+          return;
+        }
       }
 
       await prisma.$transaction(async (tx) => {
@@ -427,7 +459,7 @@ export async function missionRoutes(server: FastifyInstance, bus: TelemetryBus):
             droneId: mission.droneId,
             userId: request.authUser!.id,
             command: "deleteMission",
-            payloadJson: JSON.stringify({ missionId }),
+            payloadJson: JSON.stringify({ missionId, force }),
             result: "accepted"
           }
         });
